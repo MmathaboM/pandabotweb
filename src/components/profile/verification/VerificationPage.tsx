@@ -1,7 +1,8 @@
+
 import React, { useState, useEffect, useRef } from "react";
 import { X, RefreshCw, Camera } from "lucide-react";
 import api from "../../../services/api";
-import { Html5Qrcode } from "html5-qrcode";
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 
 interface VerifyIDPageProps {
   onBack: () => void;
@@ -17,17 +18,21 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   const [confirmIdNumber, setConfirmIdNumber] = useState("");
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [debugInfo, setDebugInfo] = useState<string>("");
 
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scannerContainerId = "scanner-container";
 
-  // ─── Request permission explicitly ──────────────────────────────────────
+  // ─── Request permission ──────────────────────────────────────────────────
   const requestCameraPermission = async (): Promise<boolean> => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
+        video: {
+          facingMode: "environment",
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
       });
-      // Stop the stream immediately (we only needed permission)
       stream.getTracks().forEach((track) => track.stop());
       return true;
     } catch (err) {
@@ -36,24 +41,20 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     }
   };
 
-  // ─── Start scanner (only after permission) ─────────────────────────────
+  // ─── Start scanner with PDF417 support ─────────────────────────────────
   const startScanner = async () => {
-    // First check for permission
     const hasPermission = await requestCameraPermission();
     if (!hasPermission) {
       setPermissionDenied(true);
-      setCameraError(
-        "Camera access is required to scan your ID. Please allow camera permissions in your browser settings.",
-      );
-      setScanning(false);
+      setCameraError("Camera access is required.");
       return;
     }
 
-    // Permission granted – start the scanner
     try {
       setScanning(true);
       setPermissionDenied(false);
       setCameraError(null);
+      setDebugInfo("Initializing scanner...");
 
       const scanner = new Html5Qrcode(scannerContainerId);
       scannerRef.current = scanner;
@@ -62,21 +63,32 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         fps: 15,
         qrbox: { width: 280, height: 280 },
         aspectRatio: 1.0,
+        // Explicitly support PDF417 and QR (fallback)
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.PDF_417,
+          Html5QrcodeSupportedFormats.QR_CODE,
+        ],
       };
+
+      setDebugInfo("Camera starting...");
 
       await scanner.start(
         { facingMode: "environment" },
         config,
-        onScanSuccess,
+        (decodedText) => {
+          setDebugInfo(`Detected: ${decodedText.substring(0, 20)}...`);
+          onScanSuccess(decodedText);
+        },
         (errorMessage) => {
           // Ignore continuous errors
+          // Optionally update debug info
+          setDebugInfo(`Scanning... (${errorMessage})`);
         },
       );
+      setDebugInfo("Scanner ready – point at barcode.");
     } catch (err: any) {
       console.error("Scanner start error:", err);
-      setCameraError(
-        "Unable to start the camera. Please check your camera connection and try again.",
-      );
+      setCameraError("Unable to start the camera.");
       setScanning(false);
     }
   };
@@ -94,7 +106,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     setScanning(false);
   };
 
-  // ─── Load profile & start scanner ──────────────────────────────────────
+  // ─── Load profile & start ──────────────────────────────────────────────
   useEffect(() => {
     const loadProfile = async () => {
       try {
@@ -106,7 +118,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         console.error("Failed to load profile", err);
       } finally {
         setLoading(false);
-        // Start scanner after loading profile
         startScanner();
       }
     };
@@ -120,7 +131,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     };
   }, []);
 
-  // ─── Barcode scan handler ──────────────────────────────────────────────
+  // ─── Scan success ─────────────────────────────────────────────────────────
   const onScanSuccess = async (decodedText: string) => {
     if (processing) return;
     await stopScanner();
@@ -169,7 +180,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     }
   };
 
-  // ─── Barcode parser (SA ID PDF417) ─────────────────────────────────────
+  // ─── Barcode parser (unchanged) ────────────────────────────────────────
   const parseSAIDBarcode = (data: string) => {
     let idNumber = "";
     let surname = "";
@@ -218,7 +229,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     };
   };
 
-  // ─── Profile comparison helpers ────────────────────────────────────────
+  // ─── Profile comparison helpers (unchanged) ─────────────────────────────
   const normalizeString = (str: string): string =>
     str.toLowerCase().trim().replace(/\s+/g, " ");
 
@@ -445,7 +456,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     );
   }
 
-  // ─── Permission denied screen ──────────────────────────────────────────
   if (permissionDenied) {
     return (
       <div
@@ -472,109 +482,26 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
             </button>
           </div>
           <p className="pc-permission-note">
-            If you previously blocked camera access, click "Grant Permission" to
-            allow it now. If the prompt does not appear, check your browser
-            settings.
+            If you previously blocked access, click "Grant Permission" to allow
+            it now.
           </p>
         </div>
-
         {showManual && (
-          <div className="pc-manual-modal">
-            <div className="pc-manual-card">
-              <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>
-                Enter ID Manually
-              </h3>
-              <div className="pc-input-group">
-                <label>SA ID Number</label>
-                <input
-                  type="text"
-                  value={idNumber}
-                  onChange={(e) => setIdNumber(e.target.value)}
-                  placeholder="13-digit SA ID number"
-                  maxLength={13}
-                />
-              </div>
-              <div className="pc-input-group">
-                <label>Confirm ID Number</label>
-                <input
-                  type="text"
-                  value={confirmIdNumber}
-                  onChange={(e) => setConfirmIdNumber(e.target.value)}
-                  placeholder="Confirm ID number"
-                  maxLength={13}
-                />
-              </div>
-              <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
-                <button
-                  className="pc-btn pc-btn-primary"
-                  onClick={handleManualVerify}
-                >
-                  Verify
-                </button>
-                <button
-                  className="pc-btn pc-btn-secondary"
-                  onClick={() => setShowManual(false)}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
+          <ManualEntryModal
+            {...{
+              idNumber,
+              setIdNumber,
+              confirmIdNumber,
+              setConfirmIdNumber,
+              handleManualVerify,
+              setShowManual,
+            }}
+          />
         )}
-
-        <style>{`
-          .pc-permission-card {
-            background: #fff;
-            border-radius: 20px;
-            padding: 32px 24px;
-            max-width: 400px;
-            width: 100%;
-            text-align: center;
-            box-shadow: 0 8px 40px rgba(0,0,0,0.2);
-          }
-          .pc-permission-icon {
-            width: 80px;
-            height: 80px;
-            border-radius: 50%;
-            background: #fff3e0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 0 auto 16px;
-          }
-          .pc-permission-title {
-            font-size: 20px;
-            font-weight: 700;
-            color: #1a1a2e;
-            margin-bottom: 8px;
-          }
-          .pc-permission-message {
-            color: #6b7280;
-            font-size: 14px;
-            line-height: 1.6;
-            margin-bottom: 24px;
-          }
-          .pc-permission-actions {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            margin-bottom: 16px;
-          }
-          .pc-permission-actions .pc-btn {
-            padding: 12px;
-            width: 100%;
-          }
-          .pc-permission-note {
-            font-size: 12px;
-            color: #9ca3af;
-            line-height: 1.4;
-          }
-        `}</style>
       </div>
     );
   }
 
-  // ─── Normal scanner view ───────────────────────────────────────────────
   return (
     <div className="pc-root" style={{ overflow: "hidden", background: "#000" }}>
       <div
@@ -604,7 +531,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           id={scannerContainerId}
           style={{ width: "100%", height: "100%" }}
         />
-
         <div className="pc-scan-overlay">
           <div className="pc-scan-area">
             <svg
@@ -622,9 +548,11 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
             <p className="pc-scan-text">
               Position the barcode on the back of your ID inside the frame
             </p>
+            <p style={{ color: "#aaa", fontSize: 12, marginTop: 8 }}>
+              {debugInfo}
+            </p>
           </div>
         </div>
-
         {processing && (
           <div className="pc-processing-overlay">
             <RefreshCw
@@ -647,211 +575,108 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
       </button>
 
       {showManual && !processing && (
-        <div className="pc-manual-modal">
-          <div className="pc-manual-card">
-            <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>
-              Enter ID Manually
-            </h3>
-            <div className="pc-input-group">
-              <label>SA ID Number</label>
-              <input
-                type="text"
-                value={idNumber}
-                onChange={(e) => setIdNumber(e.target.value)}
-                placeholder="13-digit SA ID number"
-                maxLength={13}
-              />
-            </div>
-            <div className="pc-input-group">
-              <label>Confirm ID Number</label>
-              <input
-                type="text"
-                value={confirmIdNumber}
-                onChange={(e) => setConfirmIdNumber(e.target.value)}
-                placeholder="Confirm ID number"
-                maxLength={13}
-              />
-            </div>
-            <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
-              <button
-                className="pc-btn pc-btn-primary"
-                onClick={handleManualVerify}
-              >
-                Verify
-              </button>
-              <button
-                className="pc-btn pc-btn-secondary"
-                onClick={() => setShowManual(false)}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+        <ManualEntryModal
+          {...{
+            idNumber,
+            setIdNumber,
+            confirmIdNumber,
+            setConfirmIdNumber,
+            handleManualVerify,
+            setShowManual,
+          }}
+        />
       )}
 
       <style>{`
-        .pc-root {
-          position: fixed;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100vh;
-          background: #000;
-          display: flex;
-          flex-direction: column;
-          z-index: 1000;
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        }
-        .pc-header {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          padding: 14px 16px;
-          width: 100%;
-          position: absolute;
-          top: 0;
-          left: 0;
-          z-index: 10;
-        }
-        .pc-header__back {
-          background: rgba(0,0,0,0.5);
-          border: none;
-          width: 40px; height: 40px;
-          border-radius: 50%;
-          display: flex; align-items: center; justify-content: center;
-          cursor: pointer;
-        }
-        .pc-header__title {
-          flex: 1;
-          margin: 0;
-          font-size: 18px;
-          font-weight: 700;
-          color: #fff;
-          text-align: center;
-        }
-        .pc-scan-overlay {
-          position: absolute;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          pointer-events: none;
-        }
-        .pc-scan-area {
-          width: 80%;
-          max-width: 320px;
-          aspect-ratio: 1 / 1;
-          border: 2px solid #fff;
-          border-radius: 12px;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          background: rgba(0,0,0,0.3);
-          padding: 20px;
-        }
-        .pc-scan-text {
-          color: #fff;
-          font-size: 14px;
-          text-align: center;
-          margin-top: 16px;
-          font-weight: 400;
-          line-height: 1.4;
-        }
-        .pc-processing-overlay {
-          position: absolute;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          background: rgba(0,0,0,0.7);
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          z-index: 20;
-        }
-        .pc-manual-entry-btn {
-          position: absolute;
-          bottom: 40px;
-          left: 50%;
-          transform: translateX(-50%);
-          background: rgba(0,0,0,0.7);
-          border: 1px solid rgba(255,255,255,0.3);
-          color: #fff;
-          padding: 12px 24px;
-          border-radius: 30px;
-          font-size: 16px;
-          font-weight: 500;
-          cursor: pointer;
-          z-index: 10;
-          backdrop-filter: blur(4px);
-        }
-        .pc-manual-entry-btn:hover {
-          background: rgba(255,255,255,0.2);
-        }
-        .pc-manual-modal {
-          position: absolute;
-          bottom: 100px;
-          left: 50%;
-          transform: translateX(-50%);
-          width: 90%;
-          max-width: 400px;
-          z-index: 30;
-        }
-        .pc-manual-card {
-          background: #fff;
-          border-radius: 16px;
-          padding: 24px;
-          box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-        }
-        .pc-input-group {
-          margin-bottom: 12px;
-        }
-        .pc-input-group label {
-          display: block;
-          font-weight: 600;
-          font-size: 14px;
-          margin-bottom: 4px;
-          color: #1a1a2e;
-        }
-        .pc-input-group input {
-          width: 100%;
-          padding: 10px 12px;
-          border: 2px solid #e5e7eb;
-          border-radius: 8px;
-          font-size: 16px;
-          outline: none;
-        }
-        .pc-input-group input:focus {
-          border-color: #fb8500;
-        }
-        .pc-btn {
-          padding: 10px 20px;
-          border: none;
-          border-radius: 8px;
-          font-weight: 600;
-          font-size: 14px;
-          cursor: pointer;
-          flex: 1;
-        }
-        .pc-btn-primary {
-          background: #fb8500;
-          color: #fff;
-        }
-        .pc-btn-primary:hover { background: #e07a00; }
-        .pc-btn-secondary {
-          background: #e5e7eb;
-          color: #1a1a2e;
-        }
-        .pc-btn-secondary:hover { background: #d1d5db; }
-        @keyframes pc-rotate { to { transform: rotate(360deg); } }
+        .pc-root { position: fixed; top:0; left:0; width:100%; height:100vh; background:#000; display:flex; flex-direction:column; z-index:1000; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        .pc-header { display:flex; align-items:center; gap:12px; padding:14px 16px; width:100%; position:absolute; top:0; left:0; z-index:10; }
+        .pc-header__back { background:rgba(0,0,0,0.5); border:none; width:40px; height:40px; border-radius:50%; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+        .pc-header__title { flex:1; margin:0; font-size:18px; font-weight:700; color:#fff; text-align:center; }
+        .pc-scan-overlay { position:absolute; top:0; left:0; width:100%; height:100%; display:flex; align-items:center; justify-content:center; pointer-events:none; }
+        .pc-scan-area { width:80%; max-width:320px; aspect-ratio:1/1; border:2px solid #fff; border-radius:12px; display:flex; flex-direction:column; align-items:center; justify-content:center; background:rgba(0,0,0,0.3); padding:20px; }
+        .pc-scan-text { color:#fff; font-size:14px; text-align:center; margin-top:16px; }
+        .pc-processing-overlay { position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:20; }
+        .pc-manual-entry-btn { position:absolute; bottom:40px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.7); border:1px solid rgba(255,255,255,0.3); color:#fff; padding:12px 24px; border-radius:30px; font-size:16px; font-weight:500; cursor:pointer; z-index:10; backdrop-filter:blur(4px); }
+        .pc-manual-entry-btn:hover { background:rgba(255,255,255,0.2); }
+        .pc-manual-modal { position:absolute; bottom:100px; left:50%; transform:translateX(-50%); width:90%; max-width:400px; z-index:30; }
+        .pc-manual-card { background:#fff; border-radius:16px; padding:24px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
+        .pc-input-group { margin-bottom:12px; }
+        .pc-input-group label { display:block; font-weight:600; font-size:14px; margin-bottom:4px; color:#1a1a2e; }
+        .pc-input-group input { width:100%; padding:10px 12px; border:2px solid #e5e7eb; border-radius:8px; font-size:16px; outline:none; }
+        .pc-input-group input:focus { border-color:#fb8500; }
+        .pc-btn { padding:10px 20px; border:none; border-radius:8px; font-weight:600; font-size:14px; cursor:pointer; flex:1; }
+        .pc-btn-primary { background:#fb8500; color:#fff; }
+        .pc-btn-primary:hover { background:#e07a00; }
+        .pc-btn-secondary { background:#e5e7eb; color:#1a1a2e; }
+        .pc-btn-secondary:hover { background:#d1d5db; }
+        .pc-permission-card { background:#fff; border-radius:20px; padding:32px 24px; max-width:400px; width:100%; text-align:center; box-shadow:0 8px 40px rgba(0,0,0,0.2); }
+        .pc-permission-icon { width:80px; height:80px; border-radius:50%; background:#fff3e0; display:flex; align-items:center; justify-content:center; margin:0 auto 16px; }
+        .pc-permission-title { font-size:20px; font-weight:700; color:#1a1a2e; margin-bottom:8px; }
+        .pc-permission-message { color:#6b7280; font-size:14px; line-height:1.6; margin-bottom:24px; }
+        .pc-permission-actions { display:flex; flex-direction:column; gap:12px; margin-bottom:16px; }
+        .pc-permission-actions .pc-btn { padding:12px; width:100%; }
+        .pc-permission-note { font-size:12px; color:#9ca3af; line-height:1.4; }
+        @keyframes pc-rotate { to { transform:rotate(360deg); } }
         .pc-spin { animation: pc-rotate 0.8s linear infinite; }
       `}</style>
     </div>
   );
 };
+
+// ─── Manual entry modal (reused) ───────────────────────────────────────────
+interface ManualEntryProps {
+  idNumber: string;
+  setIdNumber: (v: string) => void;
+  confirmIdNumber: string;
+  setConfirmIdNumber: (v: string) => void;
+  handleManualVerify: () => void;
+  setShowManual: (v: boolean) => void;
+}
+
+const ManualEntryModal: React.FC<ManualEntryProps> = ({
+  idNumber,
+  setIdNumber,
+  confirmIdNumber,
+  setConfirmIdNumber,
+  handleManualVerify,
+  setShowManual,
+}) => (
+  <div className="pc-manual-modal">
+    <div className="pc-manual-card">
+      <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>
+        Enter ID Manually
+      </h3>
+      <div className="pc-input-group">
+        <label>SA ID Number</label>
+        <input
+          type="text"
+          value={idNumber}
+          onChange={(e) => setIdNumber(e.target.value)}
+          placeholder="13-digit SA ID number"
+          maxLength={13}
+        />
+      </div>
+      <div className="pc-input-group">
+        <label>Confirm ID Number</label>
+        <input
+          type="text"
+          value={confirmIdNumber}
+          onChange={(e) => setConfirmIdNumber(e.target.value)}
+          placeholder="Confirm ID number"
+          maxLength={13}
+        />
+      </div>
+      <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+        <button className="pc-btn pc-btn-primary" onClick={handleManualVerify}>
+          Verify
+        </button>
+        <button
+          className="pc-btn pc-btn-secondary"
+          onClick={() => setShowManual(false)}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+);
