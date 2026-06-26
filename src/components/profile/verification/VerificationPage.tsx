@@ -1,4 +1,3 @@
-// src/pages/VerifyIDPage.tsx
 import React, { useState, useEffect, useRef } from "react";
 import { X, RefreshCw, Camera } from "lucide-react";
 import api from "../../../services/api";
@@ -22,34 +21,35 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scannerContainerId = "scanner-container";
 
-  // Load user profile
-  useEffect(() => {
-    const loadProfile = async () => {
-      try {
-        const response = await api.get("/v1/auth/me");
-        if (response.data.success) {
-          setUserProfile(response.data.user);
-        }
-      } catch (err) {
-        console.error("Failed to load profile", err);
-      } finally {
-        setLoading(false);
-        startScanner();
-      }
-    };
-    loadProfile();
+  // ─── Request permission explicitly ──────────────────────────────────────
+  const requestCameraPermission = async (): Promise<boolean> => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" },
+      });
+      // Stop the stream immediately (we only needed permission)
+      stream.getTracks().forEach((track) => track.stop());
+      return true;
+    } catch (err) {
+      console.error("Permission error:", err);
+      return false;
+    }
+  };
 
-    return () => {
-      if (scannerRef.current) {
-        scannerRef.current.stop().catch(console.error);
-        scannerRef.current.clear();
-      }
-    };
-  }, []);
-
-  // ─── Scanner ──────────────────────────────────────────────────────────────
+  // ─── Start scanner (only after permission) ─────────────────────────────
   const startScanner = async () => {
-    if (scannerRef.current) return;
+    // First check for permission
+    const hasPermission = await requestCameraPermission();
+    if (!hasPermission) {
+      setPermissionDenied(true);
+      setCameraError(
+        "Camera access is required to scan your ID. Please allow camera permissions in your browser settings.",
+      );
+      setScanning(false);
+      return;
+    }
+
+    // Permission granted – start the scanner
     try {
       setScanning(true);
       setPermissionDenied(false);
@@ -68,24 +68,15 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         { facingMode: "environment" },
         config,
         onScanSuccess,
-        (errorMessage) => {},
+        (errorMessage) => {
+          // Ignore continuous errors
+        },
       );
     } catch (err: any) {
-      console.error("Camera error:", err);
-      if (
-        err?.message?.includes("permission") ||
-        err?.name === "NotAllowedError" ||
-        err?.name === "PermissionDeniedError"
-      ) {
-        setPermissionDenied(true);
-        setCameraError(
-          "Camera access is required to scan your ID. Please allow camera permissions in your browser settings.",
-        );
-      } else {
-        setCameraError(
-          "Unable to access the camera. Please check your camera connection and try again.",
-        );
-      }
+      console.error("Scanner start error:", err);
+      setCameraError(
+        "Unable to start the camera. Please check your camera connection and try again.",
+      );
       setScanning(false);
     }
   };
@@ -103,11 +94,38 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     setScanning(false);
   };
 
-  // ─── Scan success ─────────────────────────────────────────────────────────
+  // ─── Load profile & start scanner ──────────────────────────────────────
+  useEffect(() => {
+    const loadProfile = async () => {
+      try {
+        const response = await api.get("/v1/auth/me");
+        if (response.data.success) {
+          setUserProfile(response.data.user);
+        }
+      } catch (err) {
+        console.error("Failed to load profile", err);
+      } finally {
+        setLoading(false);
+        // Start scanner after loading profile
+        startScanner();
+      }
+    };
+    loadProfile();
+
+    return () => {
+      if (scannerRef.current) {
+        scannerRef.current.stop().catch(console.error);
+        scannerRef.current.clear();
+      }
+    };
+  }, []);
+
+  // ─── Barcode scan handler ──────────────────────────────────────────────
   const onScanSuccess = async (decodedText: string) => {
     if (processing) return;
     await stopScanner();
     setProcessing(true);
+
     try {
       const parsedData = parseSAIDBarcode(decodedText);
       console.log("Parsed data:", parsedData);
@@ -151,7 +169,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     }
   };
 
-  // ─── Barcode parser ──────────────────────────────────────────────────────
+  // ─── Barcode parser (SA ID PDF417) ─────────────────────────────────────
   const parseSAIDBarcode = (data: string) => {
     let idNumber = "";
     let surname = "";
@@ -200,7 +218,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     };
   };
 
-  // ─── Profile comparison helpers ─────────────────────────────────────────
+  // ─── Profile comparison helpers ────────────────────────────────────────
   const normalizeString = (str: string): string =>
     str.toLowerCase().trim().replace(/\s+/g, " ");
 
@@ -305,7 +323,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   const handleVerifyNow = async (scannedData: any) => {
     setProcessing(true);
     try {
-      // 1. Validate ID
       const validateRes = await api.post("/v1/auth/id/validate", {
         sa_id_number: scannedData.idNumber,
       });
@@ -316,7 +333,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         return;
       }
 
-      // 2. Compare with profile
       const comparison = compareWithProfile(scannedData);
       if (!comparison.isVerified && comparison.mismatches.length > 0) {
         const confirmContinue = window.confirm(
@@ -329,7 +345,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         }
       }
 
-      // 3. Submit verification
       const verifyRes = await api.post("/v1/auth/id/verify", {
         sa_id_number: scannedData.idNumber,
         confirm_id_number: scannedData.idNumber,
@@ -430,6 +445,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     );
   }
 
+  // ─── Permission denied screen ──────────────────────────────────────────
   if (permissionDenied) {
     return (
       <div
@@ -456,8 +472,9 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
             </button>
           </div>
           <p className="pc-permission-note">
-            If you previously blocked camera access, please allow it in your
-            browser settings and click "Grant Permission" again.
+            If you previously blocked camera access, click "Grant Permission" to
+            allow it now. If the prompt does not appear, check your browser
+            settings.
           </p>
         </div>
 
@@ -557,6 +574,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     );
   }
 
+  // ─── Normal scanner view ───────────────────────────────────────────────
   return (
     <div className="pc-root" style={{ overflow: "hidden", background: "#000" }}>
       <div
