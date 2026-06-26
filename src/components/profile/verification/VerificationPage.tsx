@@ -1,5 +1,6 @@
+// src/pages/VerifyIDPage.tsx
 import React, { useState, useEffect, useRef } from "react";
-import { X, RefreshCw } from "lucide-react";
+import { X, RefreshCw, Camera } from "lucide-react";
 import api from "../../../services/api";
 import { Html5Qrcode } from "html5-qrcode";
 
@@ -15,6 +16,8 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   const [showManual, setShowManual] = useState(false);
   const [idNumber, setIdNumber] = useState("");
   const [confirmIdNumber, setConfirmIdNumber] = useState("");
+  const [permissionDenied, setPermissionDenied] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
 
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scannerContainerId = "scanner-container";
@@ -31,7 +34,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         console.error("Failed to load profile", err);
       } finally {
         setLoading(false);
-        // Start scanner after profile loads
         startScanner();
       }
     };
@@ -50,6 +52,9 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     if (scannerRef.current) return;
     try {
       setScanning(true);
+      setPermissionDenied(false);
+      setCameraError(null);
+
       const scanner = new Html5Qrcode(scannerContainerId);
       scannerRef.current = scanner;
 
@@ -65,13 +70,23 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         onScanSuccess,
         (errorMessage) => {},
       );
-    } catch (err) {
+    } catch (err: any) {
       console.error("Camera error:", err);
-      alert(
-        "Camera access denied. Please allow camera permissions or enter the ID manually.",
-      );
+      if (
+        err?.message?.includes("permission") ||
+        err?.name === "NotAllowedError" ||
+        err?.name === "PermissionDeniedError"
+      ) {
+        setPermissionDenied(true);
+        setCameraError(
+          "Camera access is required to scan your ID. Please allow camera permissions in your browser settings.",
+        );
+      } else {
+        setCameraError(
+          "Unable to access the camera. Please check your camera connection and try again.",
+        );
+      }
       setScanning(false);
-      setShowManual(true);
     }
   };
 
@@ -93,7 +108,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     if (processing) return;
     await stopScanner();
     setProcessing(true);
-
     try {
       const parsedData = parseSAIDBarcode(decodedText);
       console.log("Parsed data:", parsedData);
@@ -112,7 +126,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         return;
       }
 
-      // Show confirmation dialog (like mobile)
       const confirmVerify = window.confirm(
         `ID Scanned Successfully\n\n` +
           `ID Number: ${parsedData.idNumber}\n` +
@@ -138,7 +151,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     }
   };
 
-  // ─── Barcode parser (identical to mobile) ──────────────────────────────
+  // ─── Barcode parser ──────────────────────────────────────────────────────
   const parseSAIDBarcode = (data: string) => {
     let idNumber = "";
     let surname = "";
@@ -187,7 +200,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     };
   };
 
-  // ─── Compare with profile (same as mobile) ─────────────────────────────
+  // ─── Profile comparison helpers ─────────────────────────────────────────
   const normalizeString = (str: string): string =>
     str.toLowerCase().trim().replace(/\s+/g, " ");
 
@@ -316,7 +329,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         }
       }
 
-      // 3. Submit verification (same as mobile)
+      // 3. Submit verification
       const verifyRes = await api.post("/v1/auth/id/verify", {
         sa_id_number: scannedData.idNumber,
         confirm_id_number: scannedData.idNumber,
@@ -359,7 +372,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
 
     setProcessing(true);
     try {
-      // Use the same flow as scan
       const validateRes = await api.post("/v1/auth/id/validate", {
         sa_id_number: trimmed,
       });
@@ -418,9 +430,135 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     );
   }
 
+  if (permissionDenied) {
+    return (
+      <div
+        className="pc-root"
+        style={{ justifyContent: "center", alignItems: "center", padding: 20 }}
+      >
+        <div className="pc-permission-card">
+          <div className="pc-permission-icon">
+            <Camera size={48} color="#fb8500" />
+          </div>
+          <h2 className="pc-permission-title">Camera Access Required</h2>
+          <p className="pc-permission-message">
+            {cameraError || "We need camera access to scan your ID barcode."}
+          </p>
+          <div className="pc-permission-actions">
+            <button className="pc-btn pc-btn-primary" onClick={startScanner}>
+              Grant Permission
+            </button>
+            <button
+              className="pc-btn pc-btn-secondary"
+              onClick={() => setShowManual(true)}
+            >
+              Enter ID manually
+            </button>
+          </div>
+          <p className="pc-permission-note">
+            If you previously blocked camera access, please allow it in your
+            browser settings and click "Grant Permission" again.
+          </p>
+        </div>
+
+        {showManual && (
+          <div className="pc-manual-modal">
+            <div className="pc-manual-card">
+              <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>
+                Enter ID Manually
+              </h3>
+              <div className="pc-input-group">
+                <label>SA ID Number</label>
+                <input
+                  type="text"
+                  value={idNumber}
+                  onChange={(e) => setIdNumber(e.target.value)}
+                  placeholder="13-digit SA ID number"
+                  maxLength={13}
+                />
+              </div>
+              <div className="pc-input-group">
+                <label>Confirm ID Number</label>
+                <input
+                  type="text"
+                  value={confirmIdNumber}
+                  onChange={(e) => setConfirmIdNumber(e.target.value)}
+                  placeholder="Confirm ID number"
+                  maxLength={13}
+                />
+              </div>
+              <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+                <button
+                  className="pc-btn pc-btn-primary"
+                  onClick={handleManualVerify}
+                >
+                  Verify
+                </button>
+                <button
+                  className="pc-btn pc-btn-secondary"
+                  onClick={() => setShowManual(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <style>{`
+          .pc-permission-card {
+            background: #fff;
+            border-radius: 20px;
+            padding: 32px 24px;
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 8px 40px rgba(0,0,0,0.2);
+          }
+          .pc-permission-icon {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: #fff3e0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 16px;
+          }
+          .pc-permission-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 8px;
+          }
+          .pc-permission-message {
+            color: #6b7280;
+            font-size: 14px;
+            line-height: 1.6;
+            margin-bottom: 24px;
+          }
+          .pc-permission-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 16px;
+          }
+          .pc-permission-actions .pc-btn {
+            padding: 12px;
+            width: 100%;
+          }
+          .pc-permission-note {
+            font-size: 12px;
+            color: #9ca3af;
+            line-height: 1.4;
+          }
+        `}</style>
+      </div>
+    );
+  }
+
   return (
     <div className="pc-root" style={{ overflow: "hidden", background: "#000" }}>
-      {/* Header */}
       <div
         className="pc-header"
         style={{
@@ -443,14 +581,12 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         <div style={{ width: 40 }} />
       </div>
 
-      {/* Camera feed */}
       <div style={{ flex: 1, position: "relative" }}>
         <div
           id={scannerContainerId}
           style={{ width: "100%", height: "100%" }}
         />
 
-        {/* Overlay with scan frame */}
         <div className="pc-scan-overlay">
           <div className="pc-scan-area">
             <svg
@@ -471,7 +607,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           </div>
         </div>
 
-        {/* Processing overlay */}
         {processing && (
           <div className="pc-processing-overlay">
             <RefreshCw
@@ -486,7 +621,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         )}
       </div>
 
-      {/* Manual entry link (always visible) */}
       <button
         className="pc-manual-entry-btn"
         onClick={() => setShowManual(!showManual)}
@@ -494,7 +628,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         {showManual ? "Back to Scan" : "Enter ID manually"}
       </button>
 
-      {/* Manual entry form (togglable) */}
       {showManual && !processing && (
         <div className="pc-manual-modal">
           <div className="pc-manual-card">
