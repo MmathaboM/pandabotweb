@@ -3,7 +3,7 @@ import { Shield, ShieldCheck, RefreshCw } from "lucide-react";
 import api from "../../../services/api";
 
 interface IDVerificationCardProps {
-  onVerifyPress: () => void; // called when user clicks "Verify"
+  onVerifyPress: () => void;
 }
 
 export const IDVerificationCard: React.FC<IDVerificationCardProps> = ({

@@ -1,8 +1,6 @@
-
 import React, { useState, useEffect, useRef } from "react";
-import { X, Shield, RefreshCw, AlertCircle, CheckCircle } from "lucide-react";
+import { X, RefreshCw } from "lucide-react";
 import api from "../../../services/api";
-import { profileService } from "../../../services/profile";
 import { Html5Qrcode } from "html5-qrcode";
 
 interface VerifyIDPageProps {
@@ -14,22 +12,21 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   const [scanning, setScanning] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [userProfile, setUserProfile] = useState<any>(null);
-  const [scanError, setScanError] = useState<string | null>(null);
   const [showManual, setShowManual] = useState(false);
-
-  // Manual entry fields
   const [idNumber, setIdNumber] = useState("");
   const [confirmIdNumber, setConfirmIdNumber] = useState("");
 
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scannerContainerId = "scanner-container";
 
-  // Load user profile and start scanner
+  // Load user profile
   useEffect(() => {
-    const init = async () => {
+    const loadProfile = async () => {
       try {
-        const profile = await profileService.getProfile();
-        setUserProfile(profile);
+        const response = await api.get("/v1/auth/me");
+        if (response.data.success) {
+          setUserProfile(response.data.user);
+        }
       } catch (err) {
         console.error("Failed to load profile", err);
       } finally {
@@ -38,9 +35,8 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         startScanner();
       }
     };
-    init();
+    loadProfile();
 
-    // Cleanup scanner on unmount
     return () => {
       if (scannerRef.current) {
         scannerRef.current.stop().catch(console.error);
@@ -49,12 +45,11 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     };
   }, []);
 
-  // ─── Scanner logic ──────────────────────────────────────────────────────
+  // ─── Scanner ──────────────────────────────────────────────────────────────
   const startScanner = async () => {
     if (scannerRef.current) return;
     try {
       setScanning(true);
-      setScanError(null);
       const scanner = new Html5Qrcode(scannerContainerId);
       scannerRef.current = scanner;
 
@@ -68,13 +63,11 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         { facingMode: "environment" },
         config,
         onScanSuccess,
-        (errorMessage) => {
-          // ignore continuous scan errors
-        },
+        (errorMessage) => {},
       );
     } catch (err) {
       console.error("Camera error:", err);
-      setScanError(
+      alert(
         "Camera access denied. Please allow camera permissions or enter the ID manually.",
       );
       setScanning(false);
@@ -95,23 +88,17 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     setScanning(false);
   };
 
-  // ─── Scan success handler ──────────────────────────────────────────────
+  // ─── Scan success ─────────────────────────────────────────────────────────
   const onScanSuccess = async (decodedText: string) => {
     if (processing) return;
-
-    // Stop scanner immediately
     await stopScanner();
     setProcessing(true);
 
     try {
-      console.log("Raw barcode data:", decodedText);
-
-      // Parse using same logic as mobile
       const parsedData = parseSAIDBarcode(decodedText);
       console.log("Parsed data:", parsedData);
 
       if (!parsedData.idNumber || parsedData.idNumber.length !== 13) {
-        // Show alert with option to enter manually
         const confirmManual = window.confirm(
           "Could not extract a valid 13-digit ID number from the barcode.\n\nDo you want to enter the ID manually?",
         );
@@ -119,14 +106,13 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           setShowManual(true);
           setIdNumber(parsedData.idNumber || "");
         } else {
-          // Resume scanning
           setProcessing(false);
           startScanner();
         }
         return;
       }
 
-      // Show confirmation dialog with extracted info (similar to mobile Alert)
+      // Show confirmation dialog (like mobile)
       const confirmVerify = window.confirm(
         `ID Scanned Successfully\n\n` +
           `ID Number: ${parsedData.idNumber}\n` +
@@ -143,7 +129,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         return;
       }
 
-      // Proceed with verification
       await handleVerifyNow(parsedData);
     } catch (error) {
       console.error("Scan error:", error);
@@ -153,7 +138,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     }
   };
 
-  // ─── Parse SA ID barcode (PDF417) – exactly as mobile ──────────────────
+  // ─── Barcode parser (identical to mobile) ──────────────────────────────
   const parseSAIDBarcode = (data: string) => {
     let idNumber = "";
     let surname = "";
@@ -162,11 +147,8 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     let gender = "";
     let citizenship = "";
 
-    // Extract 13-digit ID number
     const idMatch = data.match(/\d{13}/);
-    if (idMatch) {
-      idNumber = idMatch[0];
-    }
+    if (idMatch) idNumber = idMatch[0];
 
     const parts = data.split("|");
     if (parts.length >= 6) {
@@ -183,7 +165,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
       }
     }
 
-    // Extract first name from full names
     const nameParts = fullNames.split(/\s+/);
     const firstName = nameParts[0] || "";
     const middleNames = nameParts.slice(1).join(" ") || "";
@@ -206,10 +187,9 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     };
   };
 
-  // ─── Compare with profile (same logic as mobile) ──────────────────────
-  const normalizeString = (str: string): string => {
-    return str.toLowerCase().trim().replace(/\s+/g, " ");
-  };
+  // ─── Compare with profile (same as mobile) ─────────────────────────────
+  const normalizeString = (str: string): string =>
+    str.toLowerCase().trim().replace(/\s+/g, " ");
 
   const nameMatchesAny = (
     profileName: string,
@@ -257,7 +237,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   };
 
   const compareWithProfile = (scannedData: any) => {
-    const mismatches = [];
+    const mismatches: string[] = [];
     let hasMatch = false;
 
     if (userProfile?.first_name && scannedData.fullNames) {
@@ -265,26 +245,22 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         userProfile.first_name,
         scannedData.fullNames,
       );
-      if (firstNameMatch) {
-        hasMatch = true;
-      } else {
+      if (firstNameMatch) hasMatch = true;
+      else
         mismatches.push(
           `Name: Profile has "${userProfile.first_name}" but not found on ID card`,
         );
-      }
     }
 
     if (userProfile?.last_name && scannedData.surname) {
       const lastNameMatch =
         normalizeString(userProfile.last_name) ===
         normalizeString(scannedData.surname);
-      if (lastNameMatch) {
-        hasMatch = true;
-      } else {
+      if (lastNameMatch) hasMatch = true;
+      else
         mismatches.push(
           `Surname: Profile has "${userProfile.last_name}", ID shows "${scannedData.surname}"`,
         );
-      }
     }
 
     if (userProfile?.demographics?.date_of_birth && scannedData.date_of_birth) {
@@ -296,9 +272,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         mismatches.push(
           `Date of birth: Profile shows ${userProfile.demographics.date_of_birth}, ID shows ${scannedData.date_of_birth}`,
         );
-      } else {
-        hasMatch = true;
-      }
+      } else hasMatch = true;
     }
 
     if (userProfile?.demographics?.gender_id && scannedData.gender) {
@@ -308,23 +282,17 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         mismatches.push(
           `Gender: Profile shows ID ${userProfile.demographics.gender_id}, ID shows ${scannedData.gender}`,
         );
-      } else {
-        hasMatch = true;
-      }
+      } else hasMatch = true;
     }
 
-    return {
-      hasMatch,
-      mismatches,
-      isVerified: mismatches.length === 0,
-    };
+    return { hasMatch, mismatches, isVerified: mismatches.length === 0 };
   };
 
-  // ─── Verification submission ──────────────────────────────────────────
+  // ─── Verification submission ────────────────────────────────────────────
   const handleVerifyNow = async (scannedData: any) => {
     setProcessing(true);
     try {
-      // 1. Validate ID number
+      // 1. Validate ID
       const validateRes = await api.post("/v1/auth/id/validate", {
         sa_id_number: scannedData.idNumber,
       });
@@ -337,12 +305,9 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
 
       // 2. Compare with profile
       const comparison = compareWithProfile(scannedData);
-
       if (!comparison.isVerified && comparison.mismatches.length > 0) {
         const confirmContinue = window.confirm(
-          `The following information differs from your profile:\n\n${comparison.mismatches.join(
-            "\n",
-          )}\n\nDo you want to continue with verification?`,
+          `The following information differs from your profile:\n\n${comparison.mismatches.join("\n")}\n\nDo you want to continue with verification?`,
         );
         if (!confirmContinue) {
           setProcessing(false);
@@ -351,34 +316,20 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         }
       }
 
-      // 3. Submit verification
-      await submitVerification(scannedData.idNumber);
-    } catch (error: any) {
-      console.error("Validation error:", error);
-      alert(
-        error?.response?.data?.message ||
-          "Failed to validate ID. Please try again.",
-      );
-      setProcessing(false);
-      startScanner();
-    }
-  };
-
-  const submitVerification = async (idNumber: string) => {
-    try {
-      const response = await api.post("/v1/auth/id/verify", {
-        sa_id_number: idNumber,
-        confirm_id_number: idNumber,
+      // 3. Submit verification (same as mobile)
+      const verifyRes = await api.post("/v1/auth/id/verify", {
+        sa_id_number: scannedData.idNumber,
+        confirm_id_number: scannedData.idNumber,
       });
 
-      if (response.data.success) {
+      if (verifyRes.data.success) {
         alert(
           "Verification Successful! 🎉\n\nYour ID has been verified successfully. You now have a higher trust score and priority application processing.",
         );
-        onBack(); // return to completion hub
+        onBack();
       } else {
         alert(
-          response.data.message || "Unable to verify ID. Please try again.",
+          verifyRes.data.message || "Unable to verify ID. Please try again.",
         );
         setProcessing(false);
         startScanner();
@@ -408,6 +359,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
 
     setProcessing(true);
     try {
+      // Use the same flow as scan
       const validateRes = await api.post("/v1/auth/id/validate", {
         sa_id_number: trimmed,
       });
@@ -417,7 +369,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         return;
       }
       const extracted = validateRes.data.extracted_info;
-      // Build a scannedData-like object from extracted info
       const scannedData = {
         idNumber: trimmed,
         fullNames: `${userProfile?.first_name || ""} ${userProfile?.last_name || ""}`,
@@ -425,20 +376,27 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         date_of_birth: extracted.date_of_birth,
         gender: extracted.gender,
       };
-      // Compare and proceed similarly
       const comparison = compareWithProfile(scannedData);
       if (!comparison.isVerified && comparison.mismatches.length > 0) {
         const confirmContinue = window.confirm(
-          `The following information differs from your profile:\n\n${comparison.mismatches.join(
-            "\n",
-          )}\n\nDo you want to continue with verification?`,
+          `The following information differs from your profile:\n\n${comparison.mismatches.join("\n")}\n\nDo you want to continue with verification?`,
         );
         if (!confirmContinue) {
           setProcessing(false);
           return;
         }
       }
-      await submitVerification(trimmed);
+      const verifyRes = await api.post("/v1/auth/id/verify", {
+        sa_id_number: trimmed,
+        confirm_id_number: trimmed,
+      });
+      if (verifyRes.data.success) {
+        alert("Verification Successful! 🎉");
+        onBack();
+      } else {
+        alert(verifyRes.data.message || "Verification failed.");
+        setProcessing(false);
+      }
     } catch (error: any) {
       alert(error?.response?.data?.message || "An error occurred.");
       setProcessing(false);
@@ -485,14 +443,14 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         <div style={{ width: 40 }} />
       </div>
 
-      {/* Camera view */}
+      {/* Camera feed */}
       <div style={{ flex: 1, position: "relative" }}>
         <div
           id={scannerContainerId}
           style={{ width: "100%", height: "100%" }}
         />
 
-        {/* Overlay with scan area */}
+        {/* Overlay with scan frame */}
         <div className="pc-scan-overlay">
           <div className="pc-scan-area">
             <svg
@@ -528,15 +486,15 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         )}
       </div>
 
-      {/* Manual entry button at bottom */}
+      {/* Manual entry link (always visible) */}
       <button
         className="pc-manual-entry-btn"
-        onClick={() => setShowManual(true)}
+        onClick={() => setShowManual(!showManual)}
       >
-        Enter ID Manually
+        {showManual ? "Back to Scan" : "Enter ID manually"}
       </button>
 
-      {/* Manual entry modal */}
+      {/* Manual entry form (togglable) */}
       {showManual && !processing && (
         <div className="pc-manual-modal">
           <div className="pc-manual-card">
@@ -572,12 +530,9 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
               </button>
               <button
                 className="pc-btn pc-btn-secondary"
-                onClick={() => {
-                  setShowManual(false);
-                  startScanner();
-                }}
+                onClick={() => setShowManual(false)}
               >
-                Back to Scan
+                Cancel
               </button>
             </div>
           </div>
@@ -597,7 +552,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           z-index: 1000;
           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         }
-
         .pc-header {
           display: flex;
           align-items: center;
@@ -625,7 +579,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           color: #fff;
           text-align: center;
         }
-
         .pc-scan-overlay {
           position: absolute;
           top: 0;
@@ -658,7 +611,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           font-weight: 400;
           line-height: 1.4;
         }
-
         .pc-processing-overlay {
           position: absolute;
           top: 0;
@@ -672,7 +624,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           justify-content: center;
           z-index: 20;
         }
-
         .pc-manual-entry-btn {
           position: absolute;
           bottom: 40px;
@@ -692,25 +643,20 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         .pc-manual-entry-btn:hover {
           background: rgba(255,255,255,0.2);
         }
-
         .pc-manual-modal {
           position: absolute;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          background: rgba(0,0,0,0.8);
-          display: flex;
-          align-items: center;
-          justify-content: center;
+          bottom: 100px;
+          left: 50%;
+          transform: translateX(-50%);
+          width: 90%;
+          max-width: 400px;
           z-index: 30;
         }
         .pc-manual-card {
           background: #fff;
           border-radius: 16px;
           padding: 24px;
-          width: 90%;
-          max-width: 400px;
+          box-shadow: 0 8px 32px rgba(0,0,0,0.5);
         }
         .pc-input-group {
           margin-bottom: 12px;
@@ -746,22 +692,14 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           background: #fb8500;
           color: #fff;
         }
-        .pc-btn-primary:hover {
-          background: #e07a00;
-        }
+        .pc-btn-primary:hover { background: #e07a00; }
         .pc-btn-secondary {
           background: #e5e7eb;
           color: #1a1a2e;
         }
-        .pc-btn-secondary:hover {
-          background: #d1d5db;
-        }
-        @keyframes pc-rotate {
-          to { transform: rotate(360deg); }
-        }
-        .pc-spin {
-          animation: pc-rotate 0.8s linear infinite;
-        }
+        .pc-btn-secondary:hover { background: #d1d5db; }
+        @keyframes pc-rotate { to { transform: rotate(360deg); } }
+        .pc-spin { animation: pc-rotate 0.8s linear infinite; }
       `}</style>
     </div>
   );
