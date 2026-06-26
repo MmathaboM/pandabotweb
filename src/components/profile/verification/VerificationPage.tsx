@@ -1,13 +1,6 @@
 
 import React, { useState, useEffect, useRef } from "react";
-import {
-  X,
-  Shield,
-  AlertCircle,
-  CheckCircle,
-  RefreshCw,
-  Scan,
-} from "lucide-react";
+import { X, Shield, RefreshCw, AlertCircle, CheckCircle } from "lucide-react";
 import api from "../../../services/api";
 import { profileService } from "../../../services/profile";
 import { Html5Qrcode } from "html5-qrcode";
@@ -18,22 +11,25 @@ interface VerifyIDPageProps {
 
 export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   const [loading, setLoading] = useState(true);
-  const [verifying, setVerifying] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const [idNumber, setIdNumber] = useState("");
   const [confirmIdNumber, setConfirmIdNumber] = useState("");
-  const [scanning, setScanning] = useState(false); 
+  const [userProfile, setUserProfile] = useState<any>(null);
+  const [verifying, setVerifying] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [verificationResult, setVerificationResult] = useState<{
+    success: boolean;
+    message: string;
+    dobMatch?: boolean;
+    genderMatch?: boolean;
+    extractedData?: any;
+  } | null>(null);
+  const [showManualEntry, setShowManualEntry] = useState(false);
+
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scannerContainerId = "scanner-container";
 
-  // User profile for comparison
-  const [userProfile, setUserProfile] = useState<any>(null);
-  const [comparison, setComparison] = useState<{
-    dobMatch: boolean | null;
-    genderMatch: boolean | null;
-    extractedData: any;
-  }>({ dobMatch: null, genderMatch: null, extractedData: null });
-
-  // Load profile on mount
+  // Load user profile on mount
   useEffect(() => {
     const loadProfile = async () => {
       try {
@@ -43,6 +39,8 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         console.error("Failed to load profile", err);
       } finally {
         setLoading(false);
+        // Start scanner after profile loads
+        startScanner();
       }
     };
     loadProfile();
@@ -60,8 +58,10 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
 
   // ─── Scanner logic ──────────────────────────────────────────────────────
   const startScanner = async () => {
+    if (scannerRef.current) return;
     try {
       setScanning(true);
+      setScanError(null);
       const scanner = new Html5Qrcode(scannerContainerId);
       scannerRef.current = scanner;
 
@@ -74,31 +74,18 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
       await scanner.start(
         { facingMode: "environment" },
         config,
-        (decodedText) => {
-          // Success: decodedText is the scanned ID number
-          // Validate it's a 13-digit number (or let backend validate)
-          if (/^\d{13}$/.test(decodedText)) {
-            setIdNumber(decodedText);
-            setConfirmIdNumber(decodedText);
-            stopScanner(); // close scanner
-          } else {
-            // Optionally show a toast: "Invalid barcode format"
-            console.warn(
-              "Scanned data is not a valid SA ID number:",
-              decodedText,
-            );
-          }
-        },
+        onScanSuccess,
         (errorMessage) => {
-          // Ignore scan errors (they fire continuously)
+          // Ignore continuous scan errors
         },
       );
     } catch (err) {
-      console.error("Failed to start camera", err);
-      alert(
+      console.error("Camera error:", err);
+      setScanError(
         "Camera access denied. Please allow camera permissions or enter the ID manually.",
       );
       setScanning(false);
+      setShowManualEntry(true); // fallback to manual input
     }
   };
 
@@ -107,6 +94,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
       try {
         await scannerRef.current.stop();
         scannerRef.current.clear();
+        scannerRef.current = null;
       } catch (err) {
         console.error("Error stopping scanner", err);
       }
@@ -114,7 +102,108 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     setScanning(false);
   };
 
-  // ─── Verification flow (same as before) ────────────────────────────────
+  // ─── Scan success handler ──────────────────────────────────────────────
+  const onScanSuccess = async (decodedText: string) => {
+    // Stop scanning immediately
+    await stopScanner();
+
+    // Validate format
+    if (!/^\d{13}$/.test(decodedText)) {
+      setScanError("Scanned barcode is not a valid SA ID number (13 digits).");
+      setShowManualEntry(true);
+      return;
+    }
+
+    setIdNumber(decodedText);
+    setConfirmIdNumber(decodedText);
+    setVerifying(true);
+
+    try {
+      // 1. Validate with backend
+      const validateRes = await api.post("/v1/auth/id/validate", {
+        sa_id_number: decodedText,
+      });
+
+      if (!validateRes.data.success) {
+        setVerificationResult({
+          success: false,
+          message: validateRes.data.message || "Invalid ID number",
+        });
+        setVerifying(false);
+        setShowManualEntry(true);
+        return;
+      }
+
+      const extracted = validateRes.data.extracted_info;
+
+      // 2. Compare with profile
+      const comp = validateIdAgainstProfile(extracted);
+      const mismatches = [];
+      if (comp.dobMatch === false) mismatches.push("Date of Birth");
+      if (comp.genderMatch === false) mismatches.push("Gender");
+
+      // If mismatches, ask user to confirm continue
+      if (mismatches.length > 0) {
+        const confirmContinue = window.confirm(
+          `The ID shows different ${mismatches.join(" and ")} than your profile. Continue anyway?`,
+        );
+        if (!confirmContinue) {
+          setVerificationResult({
+            success: false,
+            message: "Verification cancelled due to mismatches.",
+          });
+          setVerifying(false);
+          setShowManualEntry(true);
+          return;
+        }
+      }
+
+      // 3. Submit verification
+      const verifyRes = await api.post("/v1/auth/id/verify", {
+        sa_id_number: decodedText,
+        confirm_id_number: decodedText,
+      });
+
+      if (verifyRes.data.success) {
+        // Auto-fill missing profile data
+        await autoFillProfile(extracted);
+
+        let msg = "Your ID has been verified successfully!";
+        if (comp.dobMatch === true)
+          msg += "\n✓ Date of birth matches your profile";
+        if (comp.genderMatch === true) msg += "\n✓ Gender matches your profile";
+
+        setVerificationResult({
+          success: true,
+          message: msg,
+          dobMatch: comp.dobMatch,
+          genderMatch: comp.genderMatch,
+          extractedData: extracted,
+        });
+
+        // Auto-close after short delay
+        setTimeout(() => onBack(), 3000);
+      } else {
+        setVerificationResult({
+          success: false,
+          message: "Verification failed. Please try again.",
+        });
+        setShowManualEntry(true);
+      }
+    } catch (err: any) {
+      setVerificationResult({
+        success: false,
+        message:
+          err?.response?.data?.message ||
+          "An error occurred. Please try again.",
+      });
+      setShowManualEntry(true);
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  // ─── Helper functions ──────────────────────────────────────────────────
   const validateIdAgainstProfile = (extractedData: any) => {
     const results = {
       dobMatch: false,
@@ -157,49 +246,38 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         await profileService.updateProfile(updates);
         const updated = await profileService.getProfile();
         setUserProfile(updated);
-        return true;
       } catch (err) {
-        console.error("Auto‑fill failed", err);
-        return false;
+        console.error("Auto-fill failed", err);
       }
     }
-    return true;
   };
 
-  const handleVerify = async () => {
+  // ─── Manual entry fallback ─────────────────────────────────────────────
+  const handleManualVerify = async () => {
     const trimmed = idNumber.trim();
-    if (!trimmed) {
-      alert("Please enter your SA ID number");
-      return;
-    }
-    if (trimmed.length !== 13 || !/^\d{13}$/.test(trimmed)) {
-      alert("SA ID number must be 13 digits");
+    if (!trimmed || trimmed.length !== 13) {
+      alert("Please enter a valid 13-digit SA ID number.");
       return;
     }
     if (trimmed !== confirmIdNumber.trim()) {
-      alert("ID numbers do not match");
+      alert("ID numbers do not match.");
       return;
     }
-
     setVerifying(true);
     try {
       const validateRes = await api.post("/v1/auth/id/validate", {
         sa_id_number: trimmed,
       });
       if (!validateRes.data.success) {
-        alert(validateRes.data.message || "Invalid ID number format");
+        alert(validateRes.data.message || "Invalid ID number");
         setVerifying(false);
         return;
       }
-
       const extracted = validateRes.data.extracted_info;
       const comp = validateIdAgainstProfile(extracted);
-      setComparison(comp);
-
       const mismatches = [];
       if (comp.dobMatch === false) mismatches.push("Date of Birth");
       if (comp.genderMatch === false) mismatches.push("Gender");
-
       if (mismatches.length > 0) {
         if (
           !window.confirm(
@@ -210,27 +288,19 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           return;
         }
       }
-
       const verifyRes = await api.post("/v1/auth/id/verify", {
         sa_id_number: trimmed,
         confirm_id_number: confirmIdNumber.trim(),
       });
-
       if (verifyRes.data.success) {
         await autoFillProfile(extracted);
-        let msg = "Your ID has been verified successfully!";
-        if (comp.dobMatch === true)
-          msg += "\n✓ Date of birth matches your profile";
-        if (comp.genderMatch === true) msg += "\n✓ Gender matches your profile";
-        alert(msg);
+        alert("Your ID has been verified successfully!");
         onBack();
       } else {
         alert("Verification failed. Please try again.");
       }
     } catch (err: any) {
-      alert(
-        err?.response?.data?.message || "An error occurred. Please try again.",
-      );
+      alert(err?.response?.data?.message || "An error occurred.");
     } finally {
       setVerifying(false);
     }
@@ -262,213 +332,184 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         <div style={{ width: 40 }} />
       </div>
 
-      {/* Scanner overlay (full screen) */}
-      {scanning && (
-        <div className="pc-scanner-overlay">
-          <div className="pc-scanner-header">
-            <span>Scan ID Barcode</span>
-            <button className="pc-scanner-close" onClick={stopScanner}>
-              <X size={24} color="#fff" />
-            </button>
+      <div className="pc-body" style={{ paddingTop: 16 }}>
+        {!showManualEntry && !verificationResult && (
+          <>
+            <div className="pc-scanner-container">
+              <div id={scannerContainerId} className="pc-scanner-view" />
+              {scanning ? (
+                <p className="pc-scanner-hint">
+                  Position the barcode (PDF417) on the back of your ID inside
+                  the frame.
+                </p>
+              ) : (
+                <p className="pc-scanner-hint" style={{ color: "#dc2626" }}>
+                  Camera not active. Please allow camera permissions or use
+                  manual entry.
+                </p>
+              )}
+              <button
+                className="pc-retry-scan-btn"
+                onClick={() => {
+                  setShowManualEntry(false);
+                  startScanner();
+                }}
+                style={{ marginTop: 12 }}
+              >
+                Retry Scan
+              </button>
+              <button
+                className="pc-manual-link"
+                onClick={() => setShowManualEntry(true)}
+              >
+                Enter ID manually instead
+              </button>
+            </div>
+          </>
+        )}
+
+        {verificationResult && (
+          <div className="pc-result-card">
+            <div className="pc-result-icon">
+              {verificationResult.success ? (
+                <CheckCircle size={48} color="#16a34a" />
+              ) : (
+                <AlertCircle size={48} color="#dc2626" />
+              )}
+            </div>
+            <h3 className="pc-result-title">
+              {verificationResult.success
+                ? "Verification Successful!"
+                : "Verification Failed"}
+            </h3>
+            <p className="pc-result-message">{verificationResult.message}</p>
+            {verificationResult.success && (
+              <button
+                className="pc-primary-btn"
+                onClick={onBack}
+                style={{ marginTop: 16 }}
+              >
+                Continue
+              </button>
+            )}
+            {!verificationResult.success && (
+              <button
+                className="pc-primary-btn"
+                onClick={() => {
+                  setVerificationResult(null);
+                  setShowManualEntry(true);
+                  startScanner();
+                }}
+                style={{ marginTop: 16 }}
+              >
+                Try Again
+              </button>
+            )}
           </div>
-          <div id={scannerContainerId} className="pc-scanner-view" />
-          <p className="pc-scanner-hint">
-            Position the barcode (PDF417) on the back of your ID inside the
-            frame.
-          </p>
-        </div>
-      )}
+        )}
 
-      {/* Scrollable content (dimmed when scanning) */}
-      <div
-        className="pc-body"
-        style={{ paddingTop: 24, opacity: scanning ? 0.3 : 1 }}
-      >
-        <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <Shield size={56} color="var(--pc-primary)" />
-          <h2
-            style={{
-              fontSize: 22,
-              fontWeight: 700,
-              marginTop: 12,
-              color: "var(--pc-text)",
-            }}
-          >
-            Optional Verification
-          </h2>
-          <p
-            style={{
-              color: "var(--pc-muted)",
-              maxWidth: 400,
-              margin: "8px auto",
-            }}
-          >
-            Verify your South African ID to increase trust and get priority
-            applications.
-          </p>
-        </div>
-
-        {/* Profile summary */}
-        <div className="pc-profile-summary">
-          <strong>Current Profile Info:</strong>
-          <div style={{ marginTop: 8 }}>
-            <div className="pc-summary-row">
-              <span>Name:</span>
-              <span>
-                {userProfile?.first_name} {userProfile?.last_name}
-              </span>
+        {showManualEntry && !verificationResult && (
+          <div className="pc-manual-section">
+            <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>
+              Enter ID Number Manually
+            </h3>
+            <div className="pc-input-card">
+              <label className="pc-input-label">SA ID Number</label>
+              <input
+                className="pc-text-input"
+                value={idNumber}
+                onChange={(e) => setIdNumber(e.target.value)}
+                placeholder="13-digit SA ID number"
+                inputMode="numeric"
+                maxLength={13}
+              />
+              <hr className="pc-divider" />
+              <label className="pc-input-label">Confirm ID Number</label>
+              <input
+                className="pc-text-input"
+                value={confirmIdNumber}
+                onChange={(e) => setConfirmIdNumber(e.target.value)}
+                placeholder="Confirm ID number"
+                inputMode="numeric"
+                maxLength={13}
+              />
             </div>
-            <div className="pc-summary-row">
-              <span>DOB:</span>
-              <span>
-                {userProfile?.demographics?.date_of_birth || "Not set"}
-              </span>
-            </div>
-            <div className="pc-summary-row">
-              <span>Gender:</span>
-              <span>{userProfile?.demographics?.gender || "Not set"}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Input card with scan button */}
-        <div className="pc-input-card">
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <label className="pc-input-label">SA ID Number</label>
             <button
-              className="pc-scan-btn"
-              onClick={startScanner}
-              disabled={scanning}
+              className="pc-primary-btn"
+              onClick={handleManualVerify}
+              disabled={verifying}
             >
-              <Scan size={18} />
-              Scan
+              {verifying ? (
+                <RefreshCw size={18} className="pc-spin" />
+              ) : (
+                "Verify"
+              )}
+            </button>
+            <button
+              className="pc-scan-again-link"
+              onClick={() => {
+                setShowManualEntry(false);
+                startScanner();
+              }}
+            >
+              ← Back to Scanner
             </button>
           </div>
-          <input
-            className="pc-text-input"
-            value={idNumber}
-            onChange={(e) => setIdNumber(e.target.value)}
-            placeholder="Enter 13-digit SA ID number"
-            inputMode="numeric"
-            maxLength={13}
-            disabled={scanning}
-          />
-          <hr className="pc-divider" />
-          <label className="pc-input-label">Confirm ID Number</label>
-          <input
-            className="pc-text-input"
-            value={confirmIdNumber}
-            onChange={(e) => setConfirmIdNumber(e.target.value)}
-            placeholder="Confirm ID number"
-            inputMode="numeric"
-            maxLength={13}
-            disabled={scanning}
-          />
-        </div>
-
-        {/* Preview comparison (if both fields filled and match) */}
-        {idNumber.length === 13 &&
-          idNumber === confirmIdNumber &&
-          comparison.extractedData && (
-            <div className="pc-preview-card">
-              <strong style={{ display: "block", marginBottom: 8 }}>
-                ID Extraction Preview:
-              </strong>
-              <div className="pc-preview-row">
-                <span>DOB from ID:</span>
-                <span className="pc-preview-value">
-                  {comparison.extractedData.date_of_birth}
-                  {comparison.dobMatch !== null &&
-                    (comparison.dobMatch ? (
-                      <CheckCircle
-                        size={16}
-                        color="#16a34a"
-                        style={{ marginLeft: 6 }}
-                      />
-                    ) : (
-                      <AlertCircle
-                        size={16}
-                        color="#dc2626"
-                        style={{ marginLeft: 6 }}
-                      />
-                    ))}
-                </span>
-              </div>
-              <div className="pc-preview-row">
-                <span>Gender from ID:</span>
-                <span className="pc-preview-value">
-                  {comparison.extractedData.gender}
-                  {comparison.genderMatch !== null &&
-                    (comparison.genderMatch ? (
-                      <CheckCircle
-                        size={16}
-                        color="#16a34a"
-                        style={{ marginLeft: 6 }}
-                      />
-                    ) : (
-                      <AlertCircle
-                        size={16}
-                        color="#dc2626"
-                        style={{ marginLeft: 6 }}
-                      />
-                    ))}
-                </span>
-              </div>
-            </div>
-          )}
-
-        <button
-          className="pc-primary-btn"
-          onClick={handleVerify}
-          disabled={verifying || !idNumber || !confirmIdNumber || scanning}
-        >
-          {verifying ? (
-            <RefreshCw size={18} className="pc-spin" />
-          ) : (
-            "Verify My ID"
-          )}
-        </button>
-
-        <button className="pc-skip-btn" onClick={onBack}>
-          Skip for now
-        </button>
-
-        <p className="pc-privacy-note">
-          Your information is encrypted and secure. The ID will be validated
-          using the official SA ID algorithm and compared with your profile
-          data.
-        </p>
+        )}
       </div>
 
-      {/* Additional styles for this page (including scanner) */}
+      {/* Styles */}
       <style>{`
-        .pc-profile-summary {
-          background: rgba(251, 133, 0, 0.08);
-          border-radius: 12px;
-          padding: 16px;
-          width: 100%;
-          margin-bottom: 20px;
-        }
-        .pc-summary-row {
+        .pc-scanner-container {
           display: flex;
-          justify-content: space-between;
-          margin-bottom: 4px;
-          font-size: 14px;
+          flex-direction: column;
+          align-items: center;
+          width: 100%;
+          max-width: 400px;
+          margin: 0 auto;
         }
-        .pc-summary-row span:first-child { color: var(--pc-muted); }
-        .pc-summary-row span:last-child { font-weight: 500; color: var(--pc-text); }
-
+        .pc-scanner-view {
+          width: 100%;
+          aspect-ratio: 1 / 1;
+          background: #000;
+          border-radius: 16px;
+          overflow: hidden;
+        }
+        .pc-scanner-hint {
+          color: var(--pc-muted);
+          font-size: 14px;
+          text-align: center;
+          margin: 12px 0 4px;
+        }
+        .pc-retry-scan-btn {
+          background: var(--pc-primary);
+          color: #fff;
+          border: none;
+          padding: 8px 20px;
+          border-radius: 20px;
+          font-weight: 600;
+          font-size: 14px;
+          cursor: pointer;
+        }
+        .pc-retry-scan-btn:hover { opacity: 0.85; }
+        .pc-manual-link {
+          background: none;
+          border: none;
+          color: var(--pc-primary);
+          font-size: 14px;
+          text-decoration: underline;
+          cursor: pointer;
+          margin-top: 8px;
+        }
+        .pc-manual-section {
+          width: 100%;
+          max-width: 400px;
+          margin: 0 auto;
+        }
         .pc-input-card {
           background: #fff;
           border-radius: 16px;
           padding: 16px;
-          width: 100%;
           margin-bottom: 16px;
           box-shadow: 0 2px 8px rgba(0,0,0,0.06);
         }
@@ -497,47 +538,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           border: none;
           border-top: 1px solid #f0f0f0;
         }
-
-        .pc-preview-card {
-          background: #f8f9fa;
-          border-radius: 12px;
-          padding: 16px;
-          width: 100%;
-          margin-bottom: 20px;
-        }
-        .pc-preview-row {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 6px;
-          font-size: 14px;
-        }
-        .pc-preview-row span:first-child { color: var(--pc-muted); }
-        .pc-preview-value {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          font-weight: 500;
-          color: var(--pc-text);
-        }
-
-        .pc-scan-btn {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          background: var(--pc-primary);
-          color: #fff;
-          border: none;
-          padding: 6px 14px;
-          border-radius: 20px;
-          font-weight: 600;
-          font-size: 13px;
-          cursor: pointer;
-          transition: opacity 0.2s;
-        }
-        .pc-scan-btn:hover { opacity: 0.85; }
-        .pc-scan-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
         .pc-primary-btn {
           background: var(--pc-primary);
           color: #fff;
@@ -554,86 +554,39 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           justify-content: center;
           gap: 8px;
         }
-        .pc-primary-btn:disabled {
-          opacity: 0.6;
-          cursor: not-allowed;
-        }
-        .pc-primary-btn:not(:disabled):hover {
-          opacity: 0.9;
-        }
-
-        .pc-skip-btn {
-          background: transparent;
+        .pc-primary-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        .pc-primary-btn:hover:not(:disabled) { opacity: 0.9; }
+        .pc-scan-again-link {
+          background: none;
           border: none;
-          padding: 12px;
-          width: 100%;
-          color: var(--pc-muted);
+          color: var(--pc-primary);
           font-size: 14px;
+          text-decoration: underline;
           cursor: pointer;
-          margin-top: 4px;
+          display: block;
+          margin: 12px auto 0;
         }
-        .pc-skip-btn:hover { text-decoration: underline; }
-
-        .pc-privacy-note {
-          font-size: 12px;
-          color: var(--pc-muted);
+        .pc-result-card {
           text-align: center;
-          margin-top: 20px;
-          line-height: 1.6;
-        }
-
-        /* ── Scanner overlay ── */
-        .pc-scanner-overlay {
-          position: fixed;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          background: rgba(0,0,0,0.85);
-          z-index: 2000;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          padding: 20px;
-        }
-        .pc-scanner-header {
-          width: 100%;
-          max-width: 500px;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          color: #fff;
-          font-weight: 600;
-          font-size: 18px;
-          margin-bottom: 16px;
-        }
-        .pc-scanner-close {
-          background: rgba(255,255,255,0.2);
-          border: none;
-          width: 40px;
-          height: 40px;
-          border-radius: 50%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-        }
-        .pc-scanner-close:hover { background: rgba(255,255,255,0.3); }
-        .pc-scanner-view {
-          width: 100%;
-          max-width: 400px;
-          aspect-ratio: 1 / 1;
-          background: #000;
+          padding: 24px 16px;
+          background: #fff;
           border-radius: 16px;
-          overflow: hidden;
+          box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+          max-width: 400px;
+          margin: 0 auto;
         }
-        .pc-scanner-hint {
-          color: #ccc;
+        .pc-result-icon { margin-bottom: 12px; }
+        .pc-result-title {
+          font-size: 20px;
+          font-weight: 700;
+          color: var(--pc-text);
+          margin-bottom: 8px;
+        }
+        .pc-result-message {
+          color: var(--pc-muted);
           font-size: 14px;
-          margin-top: 16px;
-          text-align: center;
-          max-width: 360px;
+          line-height: 1.6;
+          white-space: pre-line;
         }
       `}</style>
     </div>
