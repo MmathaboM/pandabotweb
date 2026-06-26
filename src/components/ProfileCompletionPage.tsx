@@ -1,3 +1,4 @@
+// src/pages/ProfileCompletionPage.tsx
 import React, { useCallback, useEffect, useState } from "react";
 import {
   BookOpen,
@@ -14,7 +15,9 @@ import { calculateProfileCompletion } from "../utils/profileCompletion";
 import EditProfilePage from "../components/profile/edit";
 import DocumentsPage from "./profile/DocumentsPage";
 import CVBuilderPage from "./profile/CVBuilder";
-
+// import { IDVerificationCard } from "@/components/verification/IDVerificationCard";
+import { IDVerificationCard } from "./profile/verification/IDVerificationCard";
+import { VerifyIDPage } from "./profile/verification/VerificationPage";
 // ── Types & helper components ──────────────────────────────────────────────
 interface SectionInfo {
   key: string;
@@ -112,31 +115,6 @@ function SectionCard({
   );
 }
 
-function IDVerificationCard({ isVerified }: { isVerified: boolean }) {
-  return (
-    <div className={`pc-id-card${isVerified ? " pc-id-card--verified" : ""}`}>
-      <div className="pc-id-card__left">
-        <div className="pc-id-card__icon">
-          <ShieldCheck size={22} color={isVerified ? "#16a34a" : "#f59e0b"} />
-        </div>
-        <div className="pc-id-card__text">
-          <span className="pc-id-card__title">ID Verification</span>
-          <span className="pc-id-card__sub">
-            {isVerified
-              ? "Your identity has been verified"
-              : "Upload your ID document to get verified"}
-          </span>
-        </div>
-      </div>
-      {isVerified ? (
-        <CheckCircle2 size={20} color="#16a34a" />
-      ) : (
-        <span className="pc-id-card__badge">Pending</span>
-      )}
-    </div>
-  );
-}
-
 // ── Main page ──────────────────────────────────────────────────────────────
 interface ProfileCompletionPageProps {
   onBack?: () => void;
@@ -150,7 +128,7 @@ const ProfileCompletionPage: React.FC<ProfileCompletionPageProps> = ({
   const [breakdown, setBreakdown] = useState<CompletionBreakdown | null>(null);
   const [sections, setSections] = useState<SectionInfo[]>([]);
   const [currentScreen, setCurrentScreen] = useState<
-    "completion" | "edit" | "documents" | "cv"
+    "completion" | "edit" | "documents" | "cv" | "verifyId"
   >("completion");
 
   const buildSections = useCallback(
@@ -233,7 +211,7 @@ const ProfileCompletionPage: React.FC<ProfileCompletionPageProps> = ({
     loadData(true);
   };
 
-  // ── Child screens (now receive onBack) ────────────────────────────────
+  // ── Child screens ──────────────────────────────────────────────────────
   if (currentScreen === "edit") {
     return <EditProfilePage onBack={handleBackToCompletion} />;
   }
@@ -243,8 +221,11 @@ const ProfileCompletionPage: React.FC<ProfileCompletionPageProps> = ({
   if (currentScreen === "cv") {
     return <CVBuilderPage onBack={handleBackToCompletion} />;
   }
+  if (currentScreen === "verifyId") {
+    return <VerifyIDPage onBack={handleBackToCompletion} />;
+  }
 
-  // ── Main completion view ────────────────────────────────────────────────
+  // ── Main completion view ──────────────────────────────────────────────
   const overall = breakdown?.overall ?? 0;
   const motivationText =
     overall >= 100
@@ -310,7 +291,7 @@ const ProfileCompletionPage: React.FC<ProfileCompletionPageProps> = ({
 
               {breakdown && (
                 <IDVerificationCard
-                  isVerified={breakdown.idVerification.isVerified}
+                  onVerifyPress={() => setCurrentScreen("verifyId")}
                 />
               )}
 
@@ -478,6 +459,18 @@ const CSS = `
     padding: 3px 10px;
     border-radius: 20px;
   }
+  .pc-id-card__verify-btn {
+    background: var(--pc-primary);
+    color: #fff;
+    border: none;
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  .pc-id-card__verify-btn:hover { opacity: 0.85; }
 
   /* ── Section cards ── */
   .pc-sections { display: flex; flex-direction: column; gap: 12px; }
