@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { X, RefreshCw, Camera } from "lucide-react";
-import api from "../../../services/api";
+import { authService } from "../../../services/authService";
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 
 interface VerifyIDPageProps {
@@ -19,12 +19,11 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [debugInfo, setDebugInfo] = useState<string>("");
-  const [rawData, setRawData] = useState<string>("");
 
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scannerContainerId = "scanner-container";
 
-  // ─── Request permission ──────────────────────────────────────────────────
+  // ─── Request camera permission ──────────────────────────────────────────
   const requestCameraPermission = async (): Promise<boolean> => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -76,7 +75,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         { facingMode: "environment" },
         config,
         (decodedText) => {
-          setRawData(decodedText);
           setDebugInfo(`Detected: ${decodedText.substring(0, 30)}...`);
           onScanSuccess(decodedText);
         },
@@ -105,138 +103,65 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     setScanning(false);
   };
 
-  // ─── Enhanced Barcode Parser ──────────────────────────────────────────────
-  const parseSAIDBarcode = (data: string) => {
-    // Clean the input: remove extra whitespace, newlines, and trim
+  // ─── Simplified Parser – Just extracts ID number ──────────────────────
+  const extractIDNumber = (data: string): string => {
     const cleaned = data.replace(/\s+/g, " ").trim();
-    console.log("🔍 Raw (cleaned):", cleaned);
-
-    let idNumber = "";
-    let surname = "";
-    let fullNames = "";
-    let dateOfBirth = "";
-    let gender = "";
-    let citizenship = "";
-
-    // 1. Extract 13-digit ID number (look for a standalone number)
-    const idMatch = cleaned.match(/\b\d{13}\b/);
-    if (idMatch) {
-      idNumber = idMatch[0];
-      console.log("✅ Extracted ID number:", idNumber);
-    } else {
-      console.warn("⚠️ No 13-digit number found in cleaned data.");
-      // try to find any 13-digit sequence even without word boundary
-      const anyMatch = cleaned.match(/\d{13}/);
-      if (anyMatch) {
-        idNumber = anyMatch[0];
-        console.log("✅ Extracted ID (no boundary):", idNumber);
-      }
-    }
-
-    // 2. Attempt to parse pipe-separated fields (standard PDF417)
-    const parts = cleaned.split("|");
-    if (parts.length >= 6) {
-      surname = parts[0]?.trim() || "";
-      fullNames = parts[1]?.trim() || "";
-      gender = parts[2]?.trim() || "";
-      dateOfBirth = parts[5]?.trim() || "";
-      citizenship = parts[7]?.trim() || "";
-      console.log("📋 Parsed pipe-separated fields:", {
-        surname,
-        fullNames,
-        gender,
-        dateOfBirth,
-      });
-    } else {
-      // 3. Fallback: split by comma, semicolon, or multiple spaces
-      const simpleParts = cleaned.split(/[,;]\s*/);
-      if (simpleParts.length >= 2) {
-        surname = simpleParts[0]?.trim() || "";
-        fullNames = simpleParts[1]?.trim() || "";
-        console.log("📋 Parsed comma/semicolon fields:", {
-          surname,
-          fullNames,
-        });
-      } else {
-        // 4. Last resort: try to extract names from words before the ID number
-        const words = cleaned.split(/\s+/);
-        const idIndex = words.findIndex((w) => /\d{13}/.test(w));
-        if (idIndex > 0) {
-          const nameParts = words.slice(0, idIndex);
-          if (nameParts.length >= 2) {
-            surname = nameParts[nameParts.length - 1];
-            fullNames = nameParts.join(" ");
-          } else if (nameParts.length === 1) {
-            fullNames = nameParts[0];
-          }
-        }
-      }
-    }
-
-    // If fullNames is empty but we have surname, use that
-    if (!fullNames && surname) fullNames = surname;
-
-    // Extract first/middle names
-    const nameParts = fullNames.split(/\s+/);
-    const firstName = nameParts[0] || "";
-    const middleNames = nameParts.slice(1).join(" ") || "";
-
-    // Normalise gender
-    const genderMap: { [key: string]: string } = {
-      M: "male",
-      F: "female",
-      MALE: "male",
-      FEMALE: "female",
-    };
-    const normalisedGender =
-      genderMap[gender.toUpperCase()] || gender.toLowerCase();
-
-    return {
-      idNumber,
-      surname,
-      fullNames,
-      first_name: firstName,
-      middle_names: middleNames,
-      last_name: surname,
-      date_of_birth: dateOfBirth,
-      gender: normalisedGender,
-      citizenship,
-    };
+    // Try to find a 13-digit number
+    const match = cleaned.match(/\b\d{13}\b/);
+    if (match) return match[0];
+    // fallback: any 13-digit sequence
+    const anyMatch = cleaned.match(/\d{13}/);
+    return anyMatch ? anyMatch[0] : "";
   };
 
-  // ─── Scan success handler ────────────────────────────────────────────────
+  // ─── Scan success ──────────────────────────────────────────────────────
   const onScanSuccess = async (decodedText: string) => {
     if (processing) return;
     await stopScanner();
     setProcessing(true);
 
     try {
-      const parsedData = parseSAIDBarcode(decodedText);
-      console.log("Parsed data:", parsedData);
-
-      if (!parsedData.idNumber || parsedData.idNumber.length !== 13) {
-        // Show raw data for debugging
-        const debugMsg = `Raw barcode data:\n\n"${decodedText}"\n\nPlease check the console for more details.`;
+      const idNumber = extractIDNumber(decodedText);
+      if (!idNumber || idNumber.length !== 13) {
+        const rawPreview =
+          decodedText.length > 100
+            ? decodedText.substring(0, 100) + "…"
+            : decodedText;
         const confirmManual = window.confirm(
-          `Could not extract a valid 13-digit ID number from the barcode.\n\n${debugMsg}\n\nDo you want to enter the ID manually?`,
+          `Could not extract a valid 13-digit ID number from the barcode.\n\nRaw data:\n${rawPreview}\n\nDo you want to enter the ID manually?`,
         );
         if (confirmManual) {
           setShowManual(true);
-          setIdNumber(parsedData.idNumber || "");
-        } else {
-          setProcessing(false);
-          startScanner();
         }
+        setProcessing(false);
+        startScanner();
         return;
       }
 
+      // ─── Validate with backend using authService ──────────────────
+      const validateRes = await authService.validateIDNumber(idNumber);
+
+      if (!validateRes.success) {
+        alert(validateRes.message || "Invalid ID number. Please try again.");
+        setProcessing(false);
+        startScanner();
+        return;
+      }
+
+      const extracted = validateRes.extracted_info;
+
+      // ─── Build display data from backend ───────────────────────────
+      const displayName =
+        userProfile?.first_name && userProfile?.last_name
+          ? `${userProfile.first_name} ${userProfile.last_name}`
+          : extracted?.full_name || "Not available";
+
       const confirmVerify = window.confirm(
         `ID Scanned Successfully\n\n` +
-          `ID Number: ${parsedData.idNumber}\n` +
-          `Name on ID: ${parsedData.fullNames}\n` +
-          `Surname: ${parsedData.surname}\n` +
-          `DOB: ${parsedData.date_of_birth}\n` +
-          `Gender: ${parsedData.gender}\n\n` +
+          `ID Number: ${idNumber}\n` +
+          `Name on Profile: ${displayName}\n` +
+          `DOB (from ID): ${extracted?.date_of_birth || "Not available"}\n` +
+          `Gender (from ID): ${extracted?.gender || "Not available"}\n\n` +
           `Would you like to verify this ID?`,
       );
 
@@ -246,130 +171,21 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         return;
       }
 
-      await handleVerifyNow(parsedData);
-    } catch (error) {
+      // ─── Proceed to verification ──────────────────────────────────
+      await handleVerifyNow(idNumber, extracted);
+    } catch (error: any) {
       console.error("Scan error:", error);
-      alert("Failed to process barcode. Please try again.");
+      alert(error?.message || "Failed to process ID. Please try again.");
       setProcessing(false);
       startScanner();
     }
   };
 
-  // ─── Profile comparison & verification helpers (unchanged) ─────────────
-  const normalizeString = (str: string): string =>
-    str.toLowerCase().trim().replace(/\s+/g, " ");
-
-  const nameMatchesAny = (
-    profileName: string,
-    idFullNames: string,
-  ): boolean => {
-    const normalizedProfile = normalizeString(profileName);
-    const normalizedIdNames = normalizeString(idFullNames);
-    const idNameParts = normalizedIdNames.split(/\s+/);
-    return idNameParts.some(
-      (part) =>
-        part === normalizedProfile ||
-        normalizedProfile.includes(part) ||
-        part.includes(normalizedProfile),
-    );
-  };
-
-  const datesMatch = (profileDate: string, idDate: string): boolean => {
-    if (!profileDate || !idDate) return false;
-    const profileDateObj = new Date(profileDate);
-    const idDateParts = idDate.split(/\s+/);
-    if (idDateParts.length === 3) {
-      const months: { [key: string]: number } = {
-        JAN: 0,
-        FEB: 1,
-        MAR: 2,
-        APR: 3,
-        MAY: 4,
-        JUN: 5,
-        JUL: 6,
-        AUG: 7,
-        SEP: 8,
-        OCT: 9,
-        NOV: 10,
-        DEC: 11,
-      };
-      const day = parseInt(idDateParts[0]);
-      const month = months[idDateParts[1].toUpperCase()];
-      const year = parseInt(idDateParts[2]);
-      if (!isNaN(day) && month !== undefined && !isNaN(year)) {
-        const idDateObj = new Date(year, month, day);
-        return profileDateObj.toDateString() === idDateObj.toDateString();
-      }
-    }
-    return false;
-  };
-
-  const compareWithProfile = (scannedData: any) => {
-    const mismatches: string[] = [];
-    let hasMatch = false;
-
-    if (userProfile?.first_name && scannedData.fullNames) {
-      const firstNameMatch = nameMatchesAny(
-        userProfile.first_name,
-        scannedData.fullNames,
-      );
-      if (firstNameMatch) hasMatch = true;
-      else
-        mismatches.push(
-          `Name: Profile has "${userProfile.first_name}" but not found on ID card`,
-        );
-    }
-
-    if (userProfile?.last_name && scannedData.surname) {
-      const lastNameMatch =
-        normalizeString(userProfile.last_name) ===
-        normalizeString(scannedData.surname);
-      if (lastNameMatch) hasMatch = true;
-      else
-        mismatches.push(
-          `Surname: Profile has "${userProfile.last_name}", ID shows "${scannedData.surname}"`,
-        );
-    }
-
-    if (userProfile?.demographics?.date_of_birth && scannedData.date_of_birth) {
-      const dobMatch = datesMatch(
-        userProfile.demographics.date_of_birth,
-        scannedData.date_of_birth,
-      );
-      if (!dobMatch) {
-        mismatches.push(
-          `Date of birth: Profile shows ${userProfile.demographics.date_of_birth}, ID shows ${scannedData.date_of_birth}`,
-        );
-      } else hasMatch = true;
-    }
-
-    if (userProfile?.demographics?.gender_id && scannedData.gender) {
-      const genderMapping: { [key: string]: number } = { male: 1, female: 2 };
-      const expectedGenderId = genderMapping[scannedData.gender.toLowerCase()];
-      if (userProfile.demographics.gender_id !== expectedGenderId) {
-        mismatches.push(
-          `Gender: Profile shows ID ${userProfile.demographics.gender_id}, ID shows ${scannedData.gender}`,
-        );
-      } else hasMatch = true;
-    }
-
-    return { hasMatch, mismatches, isVerified: mismatches.length === 0 };
-  };
-
-  const handleVerifyNow = async (scannedData: any) => {
-    setProcessing(true);
+  // ─── Verification submission (uses backend data) ──────────────────────
+  const handleVerifyNow = async (idNumber: string, extracted: any) => {
     try {
-      const validateRes = await api.post("/v1/auth/id/validate", {
-        sa_id_number: scannedData.idNumber,
-      });
-      if (!validateRes.data.success) {
-        alert(validateRes.data.message || "The ID number is invalid.");
-        setProcessing(false);
-        startScanner();
-        return;
-      }
-
-      const comparison = compareWithProfile(scannedData);
+      // Compare with profile if needed (mismatches)
+      const comparison = compareWithProfile(extracted);
       if (!comparison.isVerified && comparison.mismatches.length > 0) {
         const confirmContinue = window.confirm(
           `The following information differs from your profile:\n\n${comparison.mismatches.join("\n")}\n\nDo you want to continue with verification?`,
@@ -381,34 +197,84 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         }
       }
 
-      const verifyRes = await api.post("/v1/auth/id/verify", {
-        sa_id_number: scannedData.idNumber,
-        confirm_id_number: scannedData.idNumber,
-      });
+      // Use authService to verify
+      const verifyRes = await authService.verifyID(idNumber);
 
-      if (verifyRes.data.success) {
+      if (verifyRes.success) {
         alert(
           "Verification Successful! 🎉\n\nYour ID has been verified successfully. You now have a higher trust score and priority application processing.",
         );
         onBack();
       } else {
-        alert(
-          verifyRes.data.message || "Unable to verify ID. Please try again.",
-        );
+        alert(verifyRes.message || "Unable to verify ID. Please try again.");
         setProcessing(false);
         startScanner();
       }
     } catch (error: any) {
       console.error("Verification error:", error);
-      alert(
-        error?.response?.data?.message ||
-          "Failed to verify ID. Please try again.",
-      );
+      alert(error?.message || "Failed to verify ID. Please try again.");
       setProcessing(false);
       startScanner();
     }
   };
 
+  // ─── Profile comparison (uses extracted data from backend) ────────────
+  const normalizeString = (str: string): string =>
+    str.toLowerCase().trim().replace(/\s+/g, " ");
+
+  const datesMatch = (profileDate: string, idDate: string): boolean => {
+    if (!profileDate || !idDate) return false;
+    const profileDateObj = new Date(profileDate);
+    const idDateObj = new Date(idDate);
+    return profileDateObj.toDateString() === idDateObj.toDateString();
+  };
+
+  const compareWithProfile = (extracted: any) => {
+    const mismatches: string[] = [];
+
+    if (userProfile?.first_name || userProfile?.last_name) {
+      const profileFullName = normalizeString(
+        `${userProfile.first_name || ""} ${userProfile.last_name || ""}`,
+      );
+      const extractedName = normalizeString(extracted?.full_name || "");
+      if (
+        extractedName &&
+        !profileFullName.includes(extractedName) &&
+        !extractedName.includes(profileFullName)
+      ) {
+        mismatches.push(
+          `Name: Profile shows "${profileFullName}", ID shows "${extracted.full_name}"`,
+        );
+      }
+    }
+
+    if (userProfile?.demographics?.date_of_birth && extracted?.date_of_birth) {
+      if (
+        !datesMatch(
+          userProfile.demographics.date_of_birth,
+          extracted.date_of_birth,
+        )
+      ) {
+        mismatches.push(
+          `Date of birth: Profile shows ${userProfile.demographics.date_of_birth}, ID shows ${extracted.date_of_birth}`,
+        );
+      }
+    }
+
+    if (userProfile?.demographics?.gender_id && extracted?.gender) {
+      const genderMapping: { [key: string]: number } = { male: 1, female: 2 };
+      const expectedGenderId = genderMapping[extracted.gender.toLowerCase()];
+      if (userProfile.demographics.gender_id !== expectedGenderId) {
+        mismatches.push(
+          `Gender: Profile shows ID ${userProfile.demographics.gender_id}, ID shows ${extracted.gender}`,
+        );
+      }
+    }
+
+    return { mismatches, isVerified: mismatches.length === 0 };
+  };
+
+  // ─── Manual entry ──────────────────────────────────────────────────────
   const handleManualVerify = async () => {
     const trimmed = idNumber.trim();
     if (!trimmed || trimmed.length !== 13) {
@@ -422,23 +288,14 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
 
     setProcessing(true);
     try {
-      const validateRes = await api.post("/v1/auth/id/validate", {
-        sa_id_number: trimmed,
-      });
-      if (!validateRes.data.success) {
-        alert(validateRes.data.message || "Invalid ID number");
+      const validateRes = await authService.validateIDNumber(trimmed);
+      if (!validateRes.success) {
+        alert(validateRes.message || "Invalid ID number");
         setProcessing(false);
         return;
       }
-      const extracted = validateRes.data.extracted_info;
-      const scannedData = {
-        idNumber: trimmed,
-        fullNames: `${userProfile?.first_name || ""} ${userProfile?.last_name || ""}`,
-        surname: userProfile?.last_name || "",
-        date_of_birth: extracted.date_of_birth,
-        gender: extracted.gender,
-      };
-      const comparison = compareWithProfile(scannedData);
+      const extracted = validateRes.extracted_info;
+      const comparison = compareWithProfile(extracted);
       if (!comparison.isVerified && comparison.mismatches.length > 0) {
         const confirmContinue = window.confirm(
           `The following information differs from your profile:\n\n${comparison.mismatches.join("\n")}\n\nDo you want to continue with verification?`,
@@ -448,30 +305,31 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           return;
         }
       }
-      const verifyRes = await api.post("/v1/auth/id/verify", {
-        sa_id_number: trimmed,
-        confirm_id_number: trimmed,
-      });
-      if (verifyRes.data.success) {
+      const verifyRes = await authService.verifyID(trimmed);
+      if (verifyRes.success) {
         alert("Verification Successful! 🎉");
         onBack();
       } else {
-        alert(verifyRes.data.message || "Verification failed.");
+        alert(verifyRes.message || "Verification failed.");
         setProcessing(false);
       }
     } catch (error: any) {
-      alert(error?.response?.data?.message || "An error occurred.");
+      alert(error?.message || "An error occurred.");
       setProcessing(false);
     }
   };
 
-  // ─── Load profile & start ──────────────────────────────────────────────
+  // ─── Load profile ──────────────────────────────────────────────────────
   useEffect(() => {
     const loadProfile = async () => {
       try {
-        const response = await api.get("/v1/auth/me");
-        if (response.data.success) {
-          setUserProfile(response.data.user);
+        const user = authService.getCachedUser();
+        if (user) {
+          setUserProfile(user);
+        } else {
+          // Try to fetch fresh user data
+          const freshUser = await authService.getCurrentUser();
+          setUserProfile(freshUser);
         }
       } catch (err) {
         console.error("Failed to load profile", err);
@@ -597,7 +455,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
             <p className="pc-scan-text">
               Position the barcode on the back of your ID inside the frame
             </p>
-            {/* Debug info */}
             <p
               style={{
                 color: "#aaa",

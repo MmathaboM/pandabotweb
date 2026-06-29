@@ -1,3 +1,4 @@
+// src/services/authService.ts
 import api from "./api";
 
 export interface LoginPayload {
@@ -82,6 +83,14 @@ export interface AuthUser {
   programme_end?: string;
   full_name?: string;
   initials?: string;
+  demographics?: {
+    date_of_birth?: string;
+    gender_id?: number;
+    gender?: string;
+    race_id?: number;
+    race?: string;
+    disability?: string;
+  };
   stats?: {
     attendance_pct: number;
     weeks_remaining: number;
@@ -98,6 +107,25 @@ interface AuthResponse {
   expires_in?: number;
   user: AuthUser;
   message?: string;
+}
+
+// ─── ID Verification Response Types ──────────────────────────────────────
+export interface IDValidationResponse {
+  success: boolean;
+  message?: string;
+  extracted_info?: {
+    date_of_birth: string;
+    gender: string;
+    full_name?: string;
+    age?: number;
+  };
+}
+
+export interface IDVerificationResponse {
+  success: boolean;
+  message?: string;
+  is_verified?: boolean;
+  verification_status?: string;
 }
 
 const TOKEN_KEY = "pandabot_token";
@@ -140,6 +168,7 @@ function extractErrorMessage(err: any): string {
 }
 
 export const authService = {
+  // ─── Existing Auth Methods ──────────────────────────────────────────────
   async login(payload: LoginPayload): Promise<AuthUser> {
     try {
       const { data } = await api.post<AuthResponse>("/v1/auth/login", payload);
@@ -277,6 +306,70 @@ export const authService = {
     }
   },
 
+  // ─── ID Verification Methods ────────────────────────────────────────────
+  async checkIDVerificationStatus(): Promise<{
+    is_verified: boolean;
+    verification_status: string;
+  }> {
+    try {
+      const token = this.getToken();
+      if (!token) throw new Error("Not authenticated");
+      const response = await api.get<{
+        success: boolean;
+        is_verified: boolean;
+        verification_status: string;
+      }>("/v1/auth/id/verify/status", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return {
+        is_verified: response.data.is_verified,
+        verification_status: response.data.verification_status,
+      };
+    } catch (err: any) {
+      console.error("Failed to check ID verification status:", err);
+      return {
+        is_verified: false,
+        verification_status: "unverified",
+      };
+    }
+  },
+
+  async validateIDNumber(sa_id_number: string): Promise<IDValidationResponse> {
+    try {
+      const token = this.getToken();
+      if (!token) throw new Error("Not authenticated");
+      const response = await api.post<IDValidationResponse>(
+        "/v1/auth/id/validate",
+        { sa_id_number },
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      return response.data;
+    } catch (err: any) {
+      console.error("ID validation error:", err);
+      throw new Error(extractErrorMessage(err));
+    }
+  },
+
+  async verifyID(sa_id_number: string): Promise<IDVerificationResponse> {
+    try {
+      const token = this.getToken();
+      if (!token) throw new Error("Not authenticated");
+      const response = await api.post<IDVerificationResponse>(
+        "/v1/auth/id/verify",
+        {
+          sa_id_number,
+          confirm_id_number: sa_id_number,
+        },
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      return response.data;
+    } catch (err: any) {
+      console.error("ID verification error:", err);
+      throw new Error(extractErrorMessage(err));
+    }
+  },
+
+  // ─── Token Management ──────────────────────────────────────────────────
   getToken(): string | null {
     return localStorage.getItem(TOKEN_KEY);
   },
@@ -291,11 +384,6 @@ export const authService = {
     }
   },
 
-  // isAuthenticated(): boolean {
-  //   const token = this.getToken();
-  //   if (!token) return false;
-  //   return true;
-  // },
   isAuthenticated(): boolean {
     return !!this.getToken();
   },
