@@ -196,6 +196,8 @@ const ChatWindow: React.FC<Props> = ({
   const messageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const isUserScrollingRef = useRef(false);
 
+  const textAreaRef = useRef<HTMLTextAreaElement>(null);
+
   const isMember = conv.members.some((m) => m.id === currentUserId);
   const isCreator = conv.created_by === currentUserId;
   const otherMemberIds = conv.members
@@ -223,6 +225,13 @@ const ChatWindow: React.FC<Props> = ({
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages]);
+
+  useEffect(() => {
+    const textarea = textAreaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = Math.min(textarea.scrollHeight, 150) + "px";
+  }, [input]);
 
   // ── Member search ──
   const fetchUsers = useCallback(
@@ -324,21 +333,21 @@ const ChatWindow: React.FC<Props> = ({
         body,
         replyTarget?.id,
         replyTarget ?? undefined,
-        attachmentUrl ,
+        attachmentUrl,
       );
     } finally {
       setSending(false);
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
     if (!isMember) return;
     if (!typingTimeoutRef.current) {
@@ -771,13 +780,15 @@ const ChatWindow: React.FC<Props> = ({
                 <Paperclip size={20} color="#9AA5B1" />
               </button>
 
-              <input
+              <textarea
+                ref={textAreaRef}
                 value={input}
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
                 placeholder={
                   attachmentFile ? "Add a caption..." : "Type a message..."
                 }
+                rows={1}
                 style={styles.input}
                 autoFocus
               />
@@ -915,7 +926,7 @@ const styles: Record<string, React.CSSProperties> = {
     top: 0,
     left: 0,
     width: "100%",
-    height: "100vh",
+    height: "100dvh",
     backgroundColor: "#F5F7FA",
     display: "flex",
     flexDirection: "column",
@@ -1119,14 +1130,14 @@ const styles: Record<string, React.CSSProperties> = {
   },
   inputBar: {
     display: "flex",
-    alignItems: "center",
+    alignItems: "flex-end",
     gap: 8,
     padding: "12px 16px",
     paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))",
     background: "#F5F7FA",
     borderTop: "1px solid #E4E7EB",
     flexShrink: 0,
-    marginBottom: 80,
+    marginBottom: 100,
   },
   attachBtn: {
     background: "none",
@@ -1137,6 +1148,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
+    alignSelf: "center",
   },
   input: {
     flex: 1,
@@ -1147,6 +1159,12 @@ const styles: Record<string, React.CSSProperties> = {
     outline: "none",
     background: "#F5F7FA",
     color: "#1F2933",
+    fontFamily: "inherit",
+    resize: "none",
+    overflow: "hidden",
+    minHeight: 44,
+    maxHeight: 150,
+    lineHeight: 1.4,
   },
   disabledInput: {
     flex: 1,
@@ -1169,6 +1187,7 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "center",
     cursor: "pointer",
     flexShrink: 0,
+    alignSelf: "center",
   },
   sendSpinner: {
     width: 18,
