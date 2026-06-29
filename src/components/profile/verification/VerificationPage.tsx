@@ -7,7 +7,6 @@ interface VerifyIDPageProps {
   onBack: () => void;
 }
 
-// ─── SA ID barcode parsed shape ──────────────────────────────────────────────
 interface ParsedID {
   idNumber: string;
   surname: string;
@@ -45,7 +44,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     if (scannerRef.current) {
       try {
         const state = (scannerRef.current as any).getState?.();
-        // 2 = SCANNING, 3 = PAUSED
         if (state === 2 || state === 3) {
           await scannerRef.current.stop();
         }
@@ -57,7 +55,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     }
   }, []);
 
-  // ─── SA ID barcode parser (matches mobile implementation) ────────────────
+  // ─── SA ID barcode parser ────────────────────────────────────────────────
   const parseSAIDBarcode = (data: string): ParsedID => {
     let idNumber = "";
     let surname = "";
@@ -106,7 +104,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     };
   };
 
-  // ─── Profile comparison helpers (matches mobile implementation) ──────────
+  // ─── Profile comparison helpers ──────────────────────────────────────────
   const normalizeString = (str: string): string =>
     str.toLowerCase().trim().replace(/\s+/g, " ");
 
@@ -221,7 +219,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     [onBack],
   );
 
-  // ─── Full verify flow (validate → confirm → submit) ──────────────────────
+  // ─── Full verify flow ────────────────────────────────────────────────────
   const runVerification = useCallback(
     async (parsed: ParsedID) => {
       setStep("processing");
@@ -268,7 +266,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   const startScanner = useCallback(async () => {
     await stopScanner();
 
-    // Check camera permission first
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "environment" },
@@ -283,7 +280,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     }
 
     try {
-      // formatsToSupport belongs in the CONSTRUCTOR, not in scanner.start()
       const scanner = new Html5Qrcode(CONTAINER_ID, {
         formatsToSupport: [
           Html5QrcodeSupportedFormats.PDF_417,
@@ -297,9 +293,9 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
 
       await scanner.start(
         { facingMode: "environment" },
-        { fps: 15 }, // only fps here — formatsToSupport is NOT valid here
+        { fps: 15 },
         async (decodedText) => {
-          if (!scannerRef.current) return; // re-entrancy guard
+          if (!scannerRef.current) return;
           await stopScanner();
 
           const parsed = parseSAIDBarcode(decodedText);
@@ -317,7 +313,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           await runVerification(parsed);
         },
         () => {
-          // Per-frame decode failures are normal — ignore
+          // per-frame decode failures are normal — ignore
         },
       );
     } catch (err: any) {
@@ -338,7 +334,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
       alert("ID numbers do not match.");
       return;
     }
-    // Wrap in ParsedID shape — fields are empty since we don't have barcode data
     await runVerification({
       idNumber: id,
       surname: "",
@@ -365,7 +360,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           if (!cancelled) setUserProfile(fresh);
         }
       } catch {
-        // non-fatal — profile comparison just won't run
+        // non-fatal
       }
       if (!cancelled) setStep("scanning");
     })();
@@ -375,12 +370,10 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     };
   }, [stopScanner]);
 
-  // ─── Kick off scanner whenever step becomes "scanning" ───────────────────
-  // Separated from the load effect so the DOM div is guaranteed to exist
+  // ─── Start scanner when step becomes "scanning" ──────────────────────────
   const isScanning = step === "scanning";
   useEffect(() => {
     if (!isScanning) return;
-    // Small delay lets React flush the render so #qr-scanner-box is in the DOM
     const t = setTimeout(() => startScanner(), 120);
     return () => clearTimeout(t);
   }, [isScanning, startScanner]);
@@ -545,7 +538,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   // ─── Render: scanning ────────────────────────────────────────────────────
   return (
     <div style={{ ...s.root, background: "#000" }}>
-      {/* Header */}
       <div style={s.header}>
         <button onClick={onBack} style={s.backBtn}>
           <X size={20} color="#fff" />
@@ -554,12 +546,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         <div style={{ width: 40 }} />
       </div>
 
-      {/*
-        CRITICAL: explicit height in px/vh — html5-qrcode calls
-        element.offsetHeight internally. If that resolves to 0
-        (which "height: 100%" does in an unsized flex parent),
-        the library renders into a 0px box and captures no frames.
-      */}
       <div
         id={CONTAINER_ID}
         style={{
@@ -570,7 +556,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         }}
       />
 
-      {/* Guide overlay — pointer-events:none so it doesn't block the video */}
       <div style={s.overlay}>
         <div style={s.scanFrame}>
           <p style={s.scanHint}>{statusMsg}</p>

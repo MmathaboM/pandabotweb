@@ -300,7 +300,6 @@ export const OpportunityDetailPage: React.FC<OpportunityDetailPageProps> = ({
                 alt={opp.title}
                 style={styles.image}
                 onError={(e) => {
-                  // Hide broken image and show accent bar instead
                   (e.target as HTMLImageElement).style.display = "none";
                   const wrapper = (e.target as HTMLElement).parentElement;
                   if (wrapper) {
@@ -351,114 +350,118 @@ export const OpportunityDetailPage: React.FC<OpportunityDetailPageProps> = ({
               </div>
             )}
 
+            {/* ─── ACTION BUTTONS – MOVED UP ────────────────────────── */}
+            <div style={styles.actionSection}>
+              {/* Notification Subscription Card */}
+              {opp.opportunity_type_id && (
+                <div
+                  style={{
+                    ...styles.notifyCard,
+                    ...(subscription ? styles.notifyCardActive : {}),
+                  }}
+                >
+                  <div style={styles.notifyIconContainer}>
+                    {subscription ? (
+                      <Bell size={20} color={colors.primary.DEFAULT} />
+                    ) : (
+                      <BellOff size={20} color={colors.text.muted} />
+                    )}
+                  </div>
+                  <div style={styles.notifyTextContainer}>
+                    <p style={styles.notifyTitle}>
+                      {subscription ? "Notifications On" : "Get Notified"}
+                    </p>
+                    <p style={styles.notifySubtitle}>
+                      {subscription
+                        ? `Receiving alerts for ${opportunityTypeName} opportunities`
+                        : `Be notified when similar ${opportunityTypeName} opportunities are posted`}
+                    </p>
+                  </div>
+                  {subscribing || checkingSubscription ? (
+                    <div style={styles.spinnerSmall} />
+                  ) : (
+                    <button
+                      onClick={handleToggleSubscription}
+                      style={{
+                        ...styles.notifyToggle,
+                        ...(subscription ? styles.notifyToggleActive : {}),
+                      }}
+                      aria-label="Toggle notification"
+                    >
+                      <div
+                        style={{
+                          ...styles.notifyToggleKnob,
+                          ...(subscription
+                            ? styles.notifyToggleKnobActive
+                            : styles.notifyToggleKnobInactive),
+                        }}
+                      />
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Apply / Profile Gate */}
+              {profileCompletion.loading ? (
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "center",
+                    padding: 20,
+                  }}
+                >
+                  <div style={styles.spinner} />
+                </div>
+              ) : opp.has_applied ? (
+                <div style={styles.appliedContainer}>
+                  <div style={styles.appliedBadge}>
+                    <Briefcase size={20} color={colors.status.success} />
+                    <span style={styles.appliedText}>Already Applied</span>
+                  </div>
+                  <p style={styles.appliedHint}>
+                    You can view your application status in My Opportunities
+                  </p>
+                </div>
+              ) : profileCompletion.isComplete ? (
+                <button style={styles.applyBtn} onClick={openApplyModal}>
+                  <Briefcase size={20} color="#fff" />
+                  <span style={styles.applyBtnText}>Apply with Documents</span>
+                </button>
+              ) : (
+                <div style={styles.profileIncompleteContainer}>
+                  <p style={styles.profileIncompleteMessage}>
+                    Complete your profile before applying for opportunities
+                  </p>
+                  <div style={styles.progressBarContainer}>
+                    <div style={styles.progressBarTrack}>
+                      <div
+                        style={{
+                          ...styles.progressBarFill,
+                          width: `${profileCompletion.percentage}%`,
+                        }}
+                      />
+                    </div>
+                    <p style={styles.progressBarText}>
+                      {profileCompletion.percentage}% Complete
+                    </p>
+                  </div>
+                  <button
+                    style={styles.completeProfileBtn}
+                    onClick={goToProfileCompletion}
+                  >
+                    <span style={styles.completeProfileBtnText}>
+                      Complete Profile
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* ─── Description ────────────────────────────────────────── */}
             <h3 style={styles.sectionTitle}>Description</h3>
             <p style={styles.description}>
               {opp.description || "No description available."}
             </p>
-
-            {/* Notification Subscription Card */}
-            {opp.opportunity_type_id && (
-              <div
-                style={{
-                  ...styles.notifyCard,
-                  ...(subscription ? styles.notifyCardActive : {}),
-                }}
-              >
-                <div style={styles.notifyIconContainer}>
-                  {subscription ? (
-                    <Bell size={20} color={colors.primary.DEFAULT} />
-                  ) : (
-                    <BellOff size={20} color={colors.text.muted} />
-                  )}
-                </div>
-                <div style={styles.notifyTextContainer}>
-                  <p style={styles.notifyTitle}>
-                    {subscription ? "Notifications On" : "Get Notified"}
-                  </p>
-                  <p style={styles.notifySubtitle}>
-                    {subscription
-                      ? `Receiving alerts for ${opportunityTypeName} opportunities`
-                      : `Be notified when similar ${opportunityTypeName} opportunities are posted`}
-                  </p>
-                </div>
-                {subscribing || checkingSubscription ? (
-                  <div style={styles.spinnerSmall} />
-                ) : (
-                  <button
-                    onClick={handleToggleSubscription}
-                    style={{
-                      ...styles.notifyToggle,
-                      ...(subscription ? styles.notifyToggleActive : {}),
-                    }}
-                    aria-label="Toggle notification"
-                  >
-                    <div
-                      style={{
-                        ...styles.notifyToggleKnob,
-                        ...(subscription
-                          ? styles.notifyToggleKnobActive
-                          : styles.notifyToggleKnobInactive),
-                      }}
-                    />
-                  </button>
-                )}
-              </div>
-            )}
-
-            {/* Apply / Profile Gate */}
-            {profileCompletion.loading ? (
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "center",
-                  padding: 20,
-                }}
-              >
-                <div style={styles.spinner} />
-              </div>
-            ) : opp.has_applied ? (
-              <div style={styles.appliedContainer}>
-                <div style={styles.appliedBadge}>
-                  <Briefcase size={20} color={colors.status.success} />
-                  <span style={styles.appliedText}>Already Applied</span>
-                </div>
-                <p style={styles.appliedHint}>
-                  You can view your application status in My Opportunities
-                </p>
-              </div>
-            ) : profileCompletion.isComplete ? (
-              <button style={styles.applyBtn} onClick={openApplyModal}>
-                <Briefcase size={20} color="#fff" />
-                <span style={styles.applyBtnText}>Apply with Documents</span>
-              </button>
-            ) : (
-              <div style={styles.profileIncompleteContainer}>
-                <p style={styles.profileIncompleteMessage}>
-                  Complete your profile before applying for opportunities
-                </p>
-                <div style={styles.progressBarContainer}>
-                  <div style={styles.progressBarTrack}>
-                    <div
-                      style={{
-                        ...styles.progressBarFill,
-                        width: `${profileCompletion.percentage}%`,
-                      }}
-                    />
-                  </div>
-                  <p style={styles.progressBarText}>
-                    {profileCompletion.percentage}% Complete
-                  </p>
-                </div>
-                <button
-                  style={styles.completeProfileBtn}
-                  onClick={goToProfileCompletion}
-                >
-                  <span style={styles.completeProfileBtnText}>
-                    Complete Profile
-                  </span>
-                </button>
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -691,7 +694,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     backgroundColor: colors.background.input,
     padding: "12px 16px",
     borderRadius: 12,
-    marginBottom: 24,
+    marginBottom: 20,
     borderLeft: `4px solid ${colors.primary.DEFAULT}`,
   },
   salaryLabel: {
@@ -708,6 +711,9 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontWeight: "700",
     color: colors.primary.DEFAULT,
     margin: 0,
+  },
+  actionSection: {
+    marginBottom: 24,
   },
   sectionTitle: {
     fontSize: 17,
@@ -730,7 +736,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     backgroundColor: colors.background.card,
     padding: 16,
     borderRadius: 16,
-    marginBottom: 16,
+    marginBottom: 12,
     border: `1px solid ${colors.border.light}`,
     boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
   },
@@ -796,17 +802,17 @@ const styles: { [key: string]: React.CSSProperties } = {
     textAlign: "center" as const,
     border: `1px solid ${colors.border.light}`,
     boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
-    marginTop: 8,
+    marginTop: 0,
   },
   profileIncompleteMessage: {
     fontSize: 14,
     fontWeight: "500",
     color: colors.text.secondary,
-    marginBottom: 20,
+    marginBottom: 16,
     marginTop: 0,
     lineHeight: 1.5,
   },
-  progressBarContainer: { width: "100%", marginBottom: 20 },
+  progressBarContainer: { width: "100%", marginBottom: 16 },
   progressBarTrack: {
     height: 10,
     backgroundColor: "#E4E7EB",
@@ -829,7 +835,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   },
   completeProfileBtn: {
     background: `linear-gradient(135deg, ${colors.primary.start}, ${colors.primary.end})`,
-    padding: "15px 24px",
+    padding: "14px 24px",
     borderRadius: 14,
     border: "none",
     cursor: "pointer",
@@ -853,7 +859,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     border: "none",
     cursor: "pointer",
     width: "100%",
-    marginTop: 8,
+    marginTop: 0,
     boxShadow: `0 4px 14px ${colors.primary.DEFAULT}40`,
   },
   applyBtnText: {
@@ -868,7 +874,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: 20,
     textAlign: "center" as const,
     border: `1px solid ${colors.status.success}30`,
-    marginTop: 8,
+    marginTop: 0,
   },
   appliedBadge: {
     display: "flex",
