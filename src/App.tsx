@@ -13,12 +13,13 @@ import { OpportunityDetailPage } from "./components/opportunities/OpportunityDet
 import { Conversation } from "./types/chat";
 import ChatWindow from "./components/chat/ChatWindow";
 import ForgotPasswordScreen from "./components/ForgotPasswordScreen";
+import ResetPasswordScreen from "./components/ResetPasswordScreen"; 
 import { useChatStore } from "./stores/chatStore";
 import "./App.css";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type AuthScreen = "onboarding" | "login" | "signup" | "forgot";
+type AuthScreen = "onboarding" | "login" | "signup" | "forgot" | "reset";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -62,10 +63,22 @@ const App: React.FC = () => {
     return () => stopPolling();
   }, [isAuthenticated]);
 
-  const [authScreen, setAuthScreen] = useState<AuthScreen>(() => {
+  // ── Determine initial auth screen ──────────────────────────────────────────
+
+  const getInitialScreen = (): AuthScreen => {
+    // Check if we have a reset token & email in the URL
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token");
+    const email = params.get("email");
+    if (token && email) {
+      return "reset";
+    }
+
     const onboarded = localStorage.getItem("pandabot_onboarded") === "true";
     return onboarded ? "login" : "onboarding";
-  });
+  };
+
+  const [authScreen, setAuthScreen] = useState<AuthScreen>(getInitialScreen);
 
   const [activeTab, setActiveTab] = useState<MainTab>("home");
   const [selectedOpportunityId, setSelectedOpportunityId] = useState<
@@ -74,13 +87,41 @@ const App: React.FC = () => {
   const [activeChatConversation, setActiveChatConversation] =
     useState<Conversation | null>(null);
 
+  // ── Reset screen success handler ───────────────────────────────────────────
+  const handleResetSuccess = () => {
+    // Remove query params from URL
+    window.history.replaceState({}, document.title, window.location.pathname);
+    setAuthScreen("login");
+  };
+
+  // ── Reset screen error / back ─────────────────────────────────────────────
+  const handleResetBack = () => {
+    window.history.replaceState({}, document.title, window.location.pathname);
+    setAuthScreen("login");
+  };
+
+  // ── When authenticated, reset any auth-screen state ──────────────────────
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (isAuthenticated) {
       setActiveTab("home");
       setSelectedOpportunityId(null);
       setActiveChatConversation(null);
-      const onboarded = localStorage.getItem("pandabot_onboarded") === "true";
-      setAuthScreen(onboarded ? "login" : "onboarding");
+      // If we're on the reset screen while authenticated, we can stay there,
+      // but we probably want to show the main app. However, reset screen
+      // doesn't require auth, so if we are authenticated and we land on reset,
+      // we can just show the app. But for a clean flow, we'll show reset if
+      // the URL still has token/email, else show app.
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get("token");
+      const email = params.get("email");
+      if (token && email) {
+        // Stay on reset screen
+        setAuthScreen("reset");
+      } else {
+        setAuthScreen("login"); // not used for authenticated state, but just in case
+      }
+    } else {
+      // Not authenticated: we already have authScreen determined
     }
   }, [isAuthenticated]);
 
@@ -107,9 +148,19 @@ const App: React.FC = () => {
 
   const handleLogout = async () => {
     await logout();
+    setAuthScreen("login");
   };
 
   // ── Loading / Auth screens ──────────────────────────────────────────────────
+
+  if (authScreen === "reset") {
+    return (
+      <ResetPasswordScreen
+        // onSuccess={handleResetSuccess}
+        // onBack={handleResetBack}
+      />
+    );
+  }
 
   if (isLoading) return null;
 
