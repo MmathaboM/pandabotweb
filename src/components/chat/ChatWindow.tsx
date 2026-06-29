@@ -196,6 +196,7 @@ const ChatWindow: React.FC<Props> = ({
   const messageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const isUserScrollingRef = useRef(false);
 
+
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
 
   const isMember = conv.members.some((m) => m.id === currentUserId);
@@ -226,6 +227,7 @@ const ChatWindow: React.FC<Props> = ({
     }
   }, [messages]);
 
+  // ── Auto‑grow textarea ──
   useEffect(() => {
     const textarea = textAreaRef.current;
     if (!textarea) return;
@@ -695,121 +697,128 @@ const ChatWindow: React.FC<Props> = ({
           <div ref={bottomRef} />
         </div>
 
-        {/* ─── Attachment Preview Bar ─── */}
-        {attachmentFile && (
-          <div style={styles.attachmentBar}>
-            <div style={styles.attachmentBarInner}>
-              {attachmentPreview ? (
-                <img
-                  src={attachmentPreview}
-                  alt="preview"
-                  style={styles.attachmentThumb}
-                />
-              ) : (
-                <div style={styles.attachmentDocIcon}>
-                  <FileText size={20} color={PRIMARY} />
-                </div>
-              )}
-              <div style={styles.attachmentInfo}>
-                <span style={styles.attachmentName}>{attachmentFile.name}</span>
-                <span style={styles.attachmentSize}>
-                  {(attachmentFile.size / 1024).toFixed(0)} KB
-                </span>
-              </div>
-              {attachmentUploading ? (
-                <div style={styles.uploadingSpinner} />
-              ) : (
-                <button
-                  onClick={handleCancelAttachment}
-                  style={styles.attachmentCancel}
-                >
-                  <X size={16} color="#9AA5B1" />
-                </button>
-              )}
-            </div>
-            {attachmentError && (
-              <div style={styles.attachmentErrorText}>{attachmentError}</div>
-            )}
-          </div>
-        )}
-
-        {/* ─── Reply Preview Bar ─── */}
-        {replyToMessage && (
-          <div style={styles.replyBar}>
-            <div style={styles.replyContent}>
-              <div style={styles.replyHeader}>
-                <span style={styles.replyName}>
-                  Replying to {replyToMessage.sender?.name ?? "Unknown"}
-                </span>
-                <button onClick={handleCancelReply} style={styles.replyClose}>
-                  <X size={16} color="#9AA5B1" />
-                </button>
-              </div>
-              {replyToMessage.attachment ? (
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  {getAttachmentMeta(replyToMessage.attachment).type ===
-                  "image" ? (
-                    <ImageIcon size={14} color={PRIMARY} />
-                  ) : (
-                    <FileText size={14} color={PRIMARY} />
-                  )}
-                  <span style={styles.replyBody}>
-                    {getAttachmentMeta(replyToMessage.attachment).name}
+        {/* ─── Bottom section (attachment preview, reply preview, input) ─── */}
+        <div style={styles.bottomSection}>
+          {/* Attachment Preview Bar */}
+          {attachmentFile && (
+            <div style={styles.attachmentBar}>
+              <div style={styles.attachmentBarInner}>
+                {attachmentPreview ? (
+                  <img
+                    src={attachmentPreview}
+                    alt="preview"
+                    style={styles.attachmentThumb}
+                  />
+                ) : (
+                  <div style={styles.attachmentDocIcon}>
+                    <FileText size={20} color={PRIMARY} />
+                  </div>
+                )}
+                <div style={styles.attachmentInfo}>
+                  <span style={styles.attachmentName}>
+                    {attachmentFile.name}
+                  </span>
+                  <span style={styles.attachmentSize}>
+                    {(attachmentFile.size / 1024).toFixed(0)} KB
                   </span>
                 </div>
-              ) : (
-                <div style={styles.replyBody}>{replyToMessage.body}</div>
+                {attachmentUploading ? (
+                  <div style={styles.uploadingSpinner} />
+                ) : (
+                  <button
+                    onClick={handleCancelAttachment}
+                    style={styles.attachmentCancel}
+                  >
+                    <X size={16} color="#9AA5B1" />
+                  </button>
+                )}
+              </div>
+              {attachmentError && (
+                <div style={styles.attachmentErrorText}>{attachmentError}</div>
               )}
             </div>
-          </div>
-        )}
+          )}
 
-        {/* ─── Input Bar ─── */}
-        <div style={styles.inputBar}>
-          {isMember ? (
-            <>
-              <button
-                onClick={handleAttachClick}
-                disabled={attachmentUploading}
-                style={{
-                  ...styles.attachBtn,
-                  opacity: attachmentUploading ? 0.4 : 1,
-                }}
-                title="Attach file"
-              >
-                <Paperclip size={20} color="#9AA5B1" />
-              </button>
-
-              <textarea
-                ref={textAreaRef}
-                value={input}
-                onChange={handleInputChange}
-                onKeyDown={handleKeyDown}
-                placeholder={
-                  attachmentFile ? "Add a caption..." : "Type a message..."
-                }
-                rows={1}
-                style={styles.input}
-                autoFocus
-              />
-
-              <button
-                onClick={handleSend}
-                disabled={!canSend}
-                style={{ ...styles.sendBtn, opacity: canSend ? 1 : 0.4 }}
-              >
-                {attachmentUploading ? (
-                  <div style={styles.sendSpinner} />
+          {/* Reply Preview Bar */}
+          {replyToMessage && (
+            <div style={styles.replyBar}>
+              <div style={styles.replyContent}>
+                <div style={styles.replyHeader}>
+                  <span style={styles.replyName}>
+                    Replying to {replyToMessage.sender?.name ?? "Unknown"}
+                  </span>
+                  <button onClick={handleCancelReply} style={styles.replyClose}>
+                    <X size={16} color="#9AA5B1" />
+                  </button>
+                </div>
+                {replyToMessage.attachment ? (
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 6 }}
+                  >
+                    {getAttachmentMeta(replyToMessage.attachment).type ===
+                    "image" ? (
+                      <ImageIcon size={14} color={PRIMARY} />
+                    ) : (
+                      <FileText size={14} color={PRIMARY} />
+                    )}
+                    <span style={styles.replyBody}>
+                      {getAttachmentMeta(replyToMessage.attachment).name}
+                    </span>
+                  </div>
                 ) : (
-                  <Send size={18} color="#fff" />
+                  <div style={styles.replyBody}>{replyToMessage.body}</div>
                 )}
-              </button>
-            </>
-          ) : (
-            <div style={styles.disabledInput}>
-              You have been removed from this group
+              </div>
             </div>
           )}
+
+          {/* Input Bar */}
+          <div style={styles.inputBar}>
+            {isMember ? (
+              <>
+                <button
+                  onClick={handleAttachClick}
+                  disabled={attachmentUploading}
+                  style={{
+                    ...styles.attachBtn,
+                    opacity: attachmentUploading ? 0.4 : 1,
+                  }}
+                  title="Attach file"
+                >
+                  <Paperclip size={20} color="#9AA5B1" />
+                </button>
+
+                <textarea
+                  ref={textAreaRef}
+                  value={input}
+                  onChange={handleInputChange}
+                  onKeyDown={handleKeyDown}
+                  placeholder={
+                    attachmentFile ? "Add a caption..." : "Type a message..."
+                  }
+                  rows={1}
+                  style={styles.input}
+                  autoFocus
+                />
+
+                <button
+                  onClick={handleSend}
+                  disabled={!canSend}
+                  style={{ ...styles.sendBtn, opacity: canSend ? 1 : 0.4 }}
+                >
+                  {attachmentUploading ? (
+                    <div style={styles.sendSpinner} />
+                  ) : (
+                    <Send size={18} color="#fff" />
+                  )}
+                </button>
+              </>
+            ) : (
+              <div style={styles.disabledInput}>
+                You have been removed from this group
+              </div>
+            )}
+          </div>
         </div>
 
         {/* ─── Member Management Modal ─── */}
@@ -1035,9 +1044,18 @@ const styles: Record<string, React.CSSProperties> = {
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
+  // ── Bottom section ──
+  bottomSection: {
+    flexShrink: 0,
+    display: "flex",
+    flexDirection: "column",
+    backgroundColor: "#F5F7FA",
+    borderTop: "1px solid #E4E7EB",
+    // safe area handled inside inputBar
+  },
   attachmentBar: {
     backgroundColor: "#fff",
-    borderTop: "1px solid #E4E7EB",
+    borderBottom: "1px solid #E4E7EB",
     padding: "10px 16px",
     flexShrink: 0,
   },
@@ -1096,7 +1114,6 @@ const styles: Record<string, React.CSSProperties> = {
   },
   replyBar: {
     backgroundColor: "#fff",
-    borderTop: "1px solid #E4E7EB",
     borderBottom: "1px solid #E4E7EB",
     padding: "8px 16px",
     display: "flex",
@@ -1134,10 +1151,8 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 8,
     padding: "12px 16px",
     paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))",
-    background: "#F5F7FA",
-    borderTop: "1px solid #E4E7EB",
+    backgroundColor: "#F5F7FA",
     flexShrink: 0,
-    marginBottom: 100,
   },
   attachBtn: {
     background: "none",
