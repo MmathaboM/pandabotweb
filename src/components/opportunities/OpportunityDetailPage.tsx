@@ -350,7 +350,13 @@ export const OpportunityDetailPage: React.FC<OpportunityDetailPageProps> = ({
               </div>
             )}
 
-            {/* ─── ACTION BUTTONS – MOVED UP ────────────────────────── */}
+            {/* ─── Description ────────────────────────────────────────── */}
+            <h3 style={styles.sectionTitle}>Description</h3>
+            <p style={styles.description}>
+              {opp.description || "No description available."}
+            </p>
+
+            {/* ─── Action Buttons (moved back to original position) ── */}
             <div style={styles.actionSection}>
               {/* Notification Subscription Card */}
               {opp.opportunity_type_id && (
@@ -457,11 +463,8 @@ export const OpportunityDetailPage: React.FC<OpportunityDetailPageProps> = ({
               )}
             </div>
 
-            {/* ─── Description ────────────────────────────────────────── */}
-            <h3 style={styles.sectionTitle}>Description</h3>
-            <p style={styles.description}>
-              {opp.description || "No description available."}
-            </p>
+            {/* Extra bottom padding to ensure content isn't hidden behind tabs */}
+            <div style={styles.bottomSpacer} />
           </div>
         </div>
       </div>
@@ -614,7 +617,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     maxWidth: 600,
     width: "100%",
     margin: "0 auto",
-    paddingBottom: 48,
+    paddingBottom: 120, // Increased bottom padding to ensure content isn't hidden behind tabs
   },
   loadingContainer: {
     display: "flex",
@@ -712,9 +715,6 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: colors.primary.DEFAULT,
     margin: 0,
   },
-  actionSection: {
-    marginBottom: 24,
-  },
   sectionTitle: {
     fontSize: 17,
     fontWeight: "700",
@@ -726,9 +726,15 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontSize: 14,
     lineHeight: 1.7,
     color: colors.text.secondary,
-    marginBottom: 28,
+    marginBottom: 24,
     marginTop: 0,
     whiteSpace: "pre-line" as const,
+  },
+  actionSection: {
+    marginBottom: 24,
+  },
+  bottomSpacer: {
+    height: 60, // Extra space at the bottom to ensure content isn't hidden
   },
   notifyCard: {
     display: "flex",
