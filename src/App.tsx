@@ -55,7 +55,6 @@ const App: React.FC = () => {
     0,
   );
 
-  // Start polling as soon as user is authenticated — not just when Chats tab opens
   useEffect(() => {
     if (isAuthenticated) {
       startPolling();
@@ -63,15 +62,17 @@ const App: React.FC = () => {
     return () => stopPolling();
   }, [isAuthenticated]);
 
-  // ── Auth / navigation state ─────────────────────────────────────────────────
   const [authScreen, setAuthScreen] = useState<AuthScreen>(() => {
     const onboarded = localStorage.getItem("pandabot_onboarded") === "true";
     return onboarded ? "login" : "onboarding";
   });
 
   const [activeTab, setActiveTab] = useState<MainTab>("home");
-  const [selectedOpportunityId, setSelectedOpportunityId] = useState<string | null>(null);
-  const [activeChatConversation, setActiveChatConversation] = useState<Conversation | null>(null);
+  const [selectedOpportunityId, setSelectedOpportunityId] = useState<
+    string | null
+  >(null);
+  const [activeChatConversation, setActiveChatConversation] =
+    useState<Conversation | null>(null);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -194,7 +195,9 @@ const App: React.FC = () => {
 
   return (
     <div className="app-shell">
-      <main className="app-content">{renderContent()}</main>
+      <main className="app-content" style={{ paddingTop: 0 }}>
+        {renderContent()}
+      </main>
       <BottomNav
         activeTab={activeTab}
         onTabChange={(tab) => {
