@@ -44,6 +44,11 @@
   --top-nav-h:     60px;
 }
 
+html, body {
+  overflow-x: hidden;
+  width: 100%;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
   background: var(--surface-2);
@@ -52,10 +57,8 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
-.app-content {
-  padding-top: 0;
-  margin-top: 0;
-}
+
+/* ── App shell ── */
 .app-shell {
   max-width: 480px;
   margin: 0 auto;
@@ -64,6 +67,7 @@ body {
   position: relative;
   display: flex;
   flex-direction: column;
+  overflow-x: hidden;
 }
 
 .app-content {
@@ -76,12 +80,28 @@ body {
 /* Scrollbar */
 ::-webkit-scrollbar { width: 0; }
 
-/* Top Nav */
-.top-nav {
+/* ── Fixed nav  ── */
+.top-nav-wrapper,
+.bottom-nav-wrapper {
   position: fixed;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  z-index: 100;
+  pointer-events: none;
+}
+
+.top-nav-wrapper {
   top: 0;
-  left: 50%;
-  transform: translateX(-50%);
+}
+
+.bottom-nav-wrapper {
+  bottom: 0;
+}
+
+/* ── Top Nav ── */
+.top-nav {
   width: 100%;
   max-width: 480px;
   height: var(--top-nav-h);
@@ -91,7 +111,7 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
-  z-index: 100;
+  pointer-events: auto;
 }
 
 .top-nav-logo {
@@ -187,12 +207,8 @@ body {
   border: 1.5px solid var(--surface);
 }
 
-/* Bottom Nav */
+/* ── Bottom Nav ── */
 .bottom-nav {
-  position: fixed;
-  bottom: 0;
-  left: 50%;
-  transform: translateX(-50%);
   width: 100%;
   max-width: 480px;
   height: var(--bottom-nav-h);
@@ -201,8 +217,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-around;
-  z-index: 100;
   padding: 0 8px;
+  pointer-events: auto;
 }
 
 .bottom-nav-item {
