@@ -19,6 +19,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [debugInfo, setDebugInfo] = useState<string>("");
+  const [rawData, setRawData] = useState<string>("");
 
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scannerContainerId = "scanner-container";
@@ -63,7 +64,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         fps: 15,
         qrbox: { width: 280, height: 280 },
         aspectRatio: 1.0,
-        // Explicitly support PDF417 and QR (fallback)
         formatsToSupport: [
           Html5QrcodeSupportedFormats.PDF_417,
           Html5QrcodeSupportedFormats.QR_CODE,
@@ -76,12 +76,11 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         { facingMode: "environment" },
         config,
         (decodedText) => {
-          setDebugInfo(`Detected: ${decodedText.substring(0, 20)}...`);
+          setRawData(decodedText);
+          setDebugInfo(`Detected: ${decodedText.substring(0, 30)}...`);
           onScanSuccess(decodedText);
         },
         (errorMessage) => {
-          // Ignore continuous errors
-          // Optionally update debug info
           setDebugInfo(`Scanning... (${errorMessage})`);
         },
       );
@@ -106,32 +105,106 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     setScanning(false);
   };
 
-  // ─── Load profile & start ──────────────────────────────────────────────
-  useEffect(() => {
-    const loadProfile = async () => {
-      try {
-        const response = await api.get("/v1/auth/me");
-        if (response.data.success) {
-          setUserProfile(response.data.user);
+  // ─── Enhanced Barcode Parser ──────────────────────────────────────────────
+  const parseSAIDBarcode = (data: string) => {
+    // Clean the input: remove extra whitespace, newlines, and trim
+    const cleaned = data.replace(/\s+/g, " ").trim();
+    console.log("🔍 Raw (cleaned):", cleaned);
+
+    let idNumber = "";
+    let surname = "";
+    let fullNames = "";
+    let dateOfBirth = "";
+    let gender = "";
+    let citizenship = "";
+
+    // 1. Extract 13-digit ID number (look for a standalone number)
+    const idMatch = cleaned.match(/\b\d{13}\b/);
+    if (idMatch) {
+      idNumber = idMatch[0];
+      console.log("✅ Extracted ID number:", idNumber);
+    } else {
+      console.warn("⚠️ No 13-digit number found in cleaned data.");
+      // try to find any 13-digit sequence even without word boundary
+      const anyMatch = cleaned.match(/\d{13}/);
+      if (anyMatch) {
+        idNumber = anyMatch[0];
+        console.log("✅ Extracted ID (no boundary):", idNumber);
+      }
+    }
+
+    // 2. Attempt to parse pipe-separated fields (standard PDF417)
+    const parts = cleaned.split("|");
+    if (parts.length >= 6) {
+      surname = parts[0]?.trim() || "";
+      fullNames = parts[1]?.trim() || "";
+      gender = parts[2]?.trim() || "";
+      dateOfBirth = parts[5]?.trim() || "";
+      citizenship = parts[7]?.trim() || "";
+      console.log("📋 Parsed pipe-separated fields:", {
+        surname,
+        fullNames,
+        gender,
+        dateOfBirth,
+      });
+    } else {
+      // 3. Fallback: split by comma, semicolon, or multiple spaces
+      const simpleParts = cleaned.split(/[,;]\s*/);
+      if (simpleParts.length >= 2) {
+        surname = simpleParts[0]?.trim() || "";
+        fullNames = simpleParts[1]?.trim() || "";
+        console.log("📋 Parsed comma/semicolon fields:", {
+          surname,
+          fullNames,
+        });
+      } else {
+        // 4. Last resort: try to extract names from words before the ID number
+        const words = cleaned.split(/\s+/);
+        const idIndex = words.findIndex((w) => /\d{13}/.test(w));
+        if (idIndex > 0) {
+          const nameParts = words.slice(0, idIndex);
+          if (nameParts.length >= 2) {
+            surname = nameParts[nameParts.length - 1];
+            fullNames = nameParts.join(" ");
+          } else if (nameParts.length === 1) {
+            fullNames = nameParts[0];
+          }
         }
-      } catch (err) {
-        console.error("Failed to load profile", err);
-      } finally {
-        setLoading(false);
-        startScanner();
       }
-    };
-    loadProfile();
+    }
 
-    return () => {
-      if (scannerRef.current) {
-        scannerRef.current.stop().catch(console.error);
-        scannerRef.current.clear();
-      }
-    };
-  }, []);
+    // If fullNames is empty but we have surname, use that
+    if (!fullNames && surname) fullNames = surname;
 
-  // ─── Scan success ─────────────────────────────────────────────────────────
+    // Extract first/middle names
+    const nameParts = fullNames.split(/\s+/);
+    const firstName = nameParts[0] || "";
+    const middleNames = nameParts.slice(1).join(" ") || "";
+
+    // Normalise gender
+    const genderMap: { [key: string]: string } = {
+      M: "male",
+      F: "female",
+      MALE: "male",
+      FEMALE: "female",
+    };
+    const normalisedGender =
+      genderMap[gender.toUpperCase()] || gender.toLowerCase();
+
+    return {
+      idNumber,
+      surname,
+      fullNames,
+      first_name: firstName,
+      middle_names: middleNames,
+      last_name: surname,
+      date_of_birth: dateOfBirth,
+      gender: normalisedGender,
+      citizenship,
+    };
+  };
+
+  // ─── Scan success handler ────────────────────────────────────────────────
   const onScanSuccess = async (decodedText: string) => {
     if (processing) return;
     await stopScanner();
@@ -142,8 +215,10 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
       console.log("Parsed data:", parsedData);
 
       if (!parsedData.idNumber || parsedData.idNumber.length !== 13) {
+        // Show raw data for debugging
+        const debugMsg = `Raw barcode data:\n\n"${decodedText}"\n\nPlease check the console for more details.`;
         const confirmManual = window.confirm(
-          "Could not extract a valid 13-digit ID number from the barcode.\n\nDo you want to enter the ID manually?",
+          `Could not extract a valid 13-digit ID number from the barcode.\n\n${debugMsg}\n\nDo you want to enter the ID manually?`,
         );
         if (confirmManual) {
           setShowManual(true);
@@ -180,56 +255,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     }
   };
 
-  // ─── Barcode parser (unchanged) ────────────────────────────────────────
-  const parseSAIDBarcode = (data: string) => {
-    let idNumber = "";
-    let surname = "";
-    let fullNames = "";
-    let dateOfBirth = "";
-    let gender = "";
-    let citizenship = "";
-
-    const idMatch = data.match(/\d{13}/);
-    if (idMatch) idNumber = idMatch[0];
-
-    const parts = data.split("|");
-    if (parts.length >= 6) {
-      surname = parts[0].trim();
-      fullNames = parts[1].trim();
-      gender = parts[2].trim();
-      dateOfBirth = parts[5].trim();
-      citizenship = parts[7]?.trim() || "";
-    } else {
-      const simpleParts = data.split(/[|,;]/);
-      if (simpleParts.length >= 2) {
-        surname = simpleParts[0].trim();
-        fullNames = simpleParts[1].trim();
-      }
-    }
-
-    const nameParts = fullNames.split(/\s+/);
-    const firstName = nameParts[0] || "";
-    const middleNames = nameParts.slice(1).join(" ") || "";
-
-    return {
-      idNumber,
-      surname,
-      fullNames,
-      first_name: firstName,
-      middle_names: middleNames,
-      last_name: surname,
-      date_of_birth: dateOfBirth,
-      gender:
-        gender === "M"
-          ? "male"
-          : gender === "F"
-            ? "female"
-            : gender.toLowerCase(),
-      citizenship,
-    };
-  };
-
-  // ─── Profile comparison helpers (unchanged) ─────────────────────────────
+  // ─── Profile comparison & verification helpers (unchanged) ─────────────
   const normalizeString = (str: string): string =>
     str.toLowerCase().trim().replace(/\s+/g, " ");
 
@@ -330,7 +356,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     return { hasMatch, mismatches, isVerified: mismatches.length === 0 };
   };
 
-  // ─── Verification submission ────────────────────────────────────────────
   const handleVerifyNow = async (scannedData: any) => {
     setProcessing(true);
     try {
@@ -384,7 +409,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     }
   };
 
-  // ─── Manual entry fallback ──────────────────────────────────────────────
   const handleManualVerify = async () => {
     const trimmed = idNumber.trim();
     if (!trimmed || trimmed.length !== 13) {
@@ -440,6 +464,31 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
       setProcessing(false);
     }
   };
+
+  // ─── Load profile & start ──────────────────────────────────────────────
+  useEffect(() => {
+    const loadProfile = async () => {
+      try {
+        const response = await api.get("/v1/auth/me");
+        if (response.data.success) {
+          setUserProfile(response.data.user);
+        }
+      } catch (err) {
+        console.error("Failed to load profile", err);
+      } finally {
+        setLoading(false);
+        startScanner();
+      }
+    };
+    loadProfile();
+
+    return () => {
+      if (scannerRef.current) {
+        scannerRef.current.stop().catch(console.error);
+        scannerRef.current.clear();
+      }
+    };
+  }, []);
 
   // ─── Render ──────────────────────────────────────────────────────────────
   if (loading) {
@@ -548,7 +597,16 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
             <p className="pc-scan-text">
               Position the barcode on the back of your ID inside the frame
             </p>
-            <p style={{ color: "#aaa", fontSize: 12, marginTop: 8 }}>
+            {/* Debug info */}
+            <p
+              style={{
+                color: "#aaa",
+                fontSize: 12,
+                marginTop: 8,
+                maxWidth: "80%",
+                wordBreak: "break-all",
+              }}
+            >
               {debugInfo}
             </p>
           </div>
@@ -623,7 +681,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   );
 };
 
-// ─── Manual entry modal (reused) ───────────────────────────────────────────
+// ─── Manual entry modal ──────────────────────────────────────────────────────
 interface ManualEntryProps {
   idNumber: string;
   setIdNumber: (v: string) => void;
