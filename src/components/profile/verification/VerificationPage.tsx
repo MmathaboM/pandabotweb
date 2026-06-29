@@ -37,7 +37,15 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   );
 
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  // Keep userProfile in a ref so callbacks always see the latest value
+  // without needing to be in the dependency array
+  const userProfileRef = useRef<any>(null);
   const CONTAINER_ID = "qr-scanner-box";
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    userProfileRef.current = userProfile;
+  }, [userProfile]);
 
   // ─── Stop scanner ────────────────────────────────────────────────────────
   const stopScanner = useCallback(async () => {
@@ -56,7 +64,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   }, []);
 
   // ─── SA ID barcode parser ────────────────────────────────────────────────
-  const parseSAIDBarcode = (data: string): ParsedID => {
+  const parseSAIDBarcode = useCallback((data: string): ParsedID => {
     let idNumber = "";
     let surname = "";
     let fullNames = "";
@@ -102,99 +110,108 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
             : gender.toLowerCase(),
       citizenship,
     };
-  };
+  }, []);
 
-  // ─── Profile comparison helpers ──────────────────────────────────────────
-  const normalizeString = (str: string): string =>
-    str.toLowerCase().trim().replace(/\s+/g, " ");
+  // ─── Profile comparison (reads from ref, not state) ──────────────────────
+  const normalizeString = useCallback(
+    (str: string): string => str.toLowerCase().trim().replace(/\s+/g, " "),
+    [],
+  );
 
-  const nameMatchesAny = (
-    profileName: string,
-    idFullNames: string,
-  ): boolean => {
-    const norm = normalizeString(profileName);
-    const idParts = normalizeString(idFullNames).split(/\s+/);
-    return idParts.some(
-      (p) => p === norm || norm.includes(p) || p.includes(norm),
-    );
-  };
+  const nameMatchesAny = useCallback(
+    (profileName: string, idFullNames: string): boolean => {
+      const norm = profileName.toLowerCase().trim().replace(/\s+/g, " ");
+      const idParts = idFullNames
+        .toLowerCase()
+        .trim()
+        .replace(/\s+/g, " ")
+        .split(/\s+/);
+      return idParts.some(
+        (p) => p === norm || norm.includes(p) || p.includes(norm),
+      );
+    },
+    [],
+  );
 
-  const datesMatch = (profileDate: string, idDate: string): boolean => {
-    if (!profileDate || !idDate) return false;
-    const profileDateObj = new Date(profileDate);
-    const idDateParts = idDate.split(/\s+/);
-    if (idDateParts.length === 3) {
-      const months: Record<string, number> = {
-        JAN: 0,
-        FEB: 1,
-        MAR: 2,
-        APR: 3,
-        MAY: 4,
-        JUN: 5,
-        JUL: 6,
-        AUG: 7,
-        SEP: 8,
-        OCT: 9,
-        NOV: 10,
-        DEC: 11,
-      };
-      const day = parseInt(idDateParts[0]);
-      const month = months[idDateParts[1].toUpperCase()];
-      const year = parseInt(idDateParts[2]);
-      if (!isNaN(day) && month !== undefined && !isNaN(year)) {
-        return (
-          profileDateObj.toDateString() ===
-          new Date(year, month, day).toDateString()
-        );
+  const datesMatch = useCallback(
+    (profileDate: string, idDate: string): boolean => {
+      if (!profileDate || !idDate) return false;
+      const profileDateObj = new Date(profileDate);
+      const idDateParts = idDate.split(/\s+/);
+      if (idDateParts.length === 3) {
+        const months: Record<string, number> = {
+          JAN: 0,
+          FEB: 1,
+          MAR: 2,
+          APR: 3,
+          MAY: 4,
+          JUN: 5,
+          JUL: 6,
+          AUG: 7,
+          SEP: 8,
+          OCT: 9,
+          NOV: 10,
+          DEC: 11,
+        };
+        const day = parseInt(idDateParts[0]);
+        const month = months[idDateParts[1].toUpperCase()];
+        const year = parseInt(idDateParts[2]);
+        if (!isNaN(day) && month !== undefined && !isNaN(year)) {
+          return (
+            profileDateObj.toDateString() ===
+            new Date(year, month, day).toDateString()
+          );
+        }
       }
-    }
-    return false;
-  };
+      return false;
+    },
+    [],
+  );
 
-  const compareWithProfile = (parsed: ParsedID): { mismatches: string[] } => {
-    const mismatches: string[] = [];
+  const compareWithProfile = useCallback(
+    (parsed: ParsedID): { mismatches: string[] } => {
+      const profile = userProfileRef.current;
+      const mismatches: string[] = [];
 
-    if (userProfile?.first_name && parsed.fullNames) {
-      if (!nameMatchesAny(userProfile.first_name, parsed.fullNames)) {
-        mismatches.push(
-          `Name: profile has "${userProfile.first_name}" but it was not found on the ID`,
-        );
+      if (profile?.first_name && parsed.fullNames) {
+        if (!nameMatchesAny(profile.first_name, parsed.fullNames)) {
+          mismatches.push(
+            `Name: profile has "${profile.first_name}" but it was not found on the ID`,
+          );
+        }
       }
-    }
-    if (userProfile?.last_name && parsed.surname) {
-      if (
-        normalizeString(userProfile.last_name) !==
-        normalizeString(parsed.surname)
-      ) {
-        mismatches.push(
-          `Surname: profile has "${userProfile.last_name}", ID shows "${parsed.surname}"`,
-        );
+      if (profile?.last_name && parsed.surname) {
+        if (
+          normalizeString(profile.last_name) !== normalizeString(parsed.surname)
+        ) {
+          mismatches.push(
+            `Surname: profile has "${profile.last_name}", ID shows "${parsed.surname}"`,
+          );
+        }
       }
-    }
-    if (userProfile?.demographics?.date_of_birth && parsed.date_of_birth) {
-      if (
-        !datesMatch(
-          userProfile.demographics.date_of_birth,
-          parsed.date_of_birth,
-        )
-      ) {
-        mismatches.push(
-          `Date of birth: profile shows ${userProfile.demographics.date_of_birth}, ID shows ${parsed.date_of_birth}`,
-        );
+      if (profile?.demographics?.date_of_birth && parsed.date_of_birth) {
+        if (
+          !datesMatch(profile.demographics.date_of_birth, parsed.date_of_birth)
+        ) {
+          mismatches.push(
+            `Date of birth: profile shows ${profile.demographics.date_of_birth}, ID shows ${parsed.date_of_birth}`,
+          );
+        }
       }
-    }
-    if (userProfile?.demographics?.gender_id && parsed.gender) {
-      const genderMap: Record<string, number> = { male: 1, female: 2 };
-      const expected = genderMap[parsed.gender.toLowerCase()];
-      if (userProfile.demographics.gender_id !== expected) {
-        mismatches.push(
-          `Gender: profile shows ID ${userProfile.demographics.gender_id}, ID shows ${parsed.gender}`,
-        );
+      if (profile?.demographics?.gender_id && parsed.gender) {
+        const genderMap: Record<string, number> = { male: 1, female: 2 };
+        const expected = genderMap[parsed.gender.toLowerCase()];
+        if (profile.demographics.gender_id !== expected) {
+          mismatches.push(
+            `Gender: profile shows ID ${profile.demographics.gender_id}, ID shows ${parsed.gender}`,
+          );
+        }
       }
-    }
 
-    return { mismatches };
-  };
+      return { mismatches };
+    },
+    [nameMatchesAny, normalizeString, datesMatch],
+  );
 
   // ─── Submit to backend ───────────────────────────────────────────────────
   const submitVerification = useCallback(
@@ -258,8 +275,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         setStep("scanning");
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [userProfile, submitVerification],
+    [compareWithProfile, submitVerification],
   );
 
   // ─── Start scanner ───────────────────────────────────────────────────────
@@ -321,10 +337,10 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
       setCameraError("Unable to start the camera. " + (err?.message || ""));
       setStep("permission-denied");
     }
-  }, [stopScanner, runVerification]);
+  }, [stopScanner, parseSAIDBarcode, runVerification]);
 
   // ─── Manual entry submit ─────────────────────────────────────────────────
-  const handleManualVerify = async () => {
+  const handleManualVerify = useCallback(async () => {
     const id = idNumber.trim();
     if (!/^\d{13}$/.test(id)) {
       alert("Enter a valid 13-digit SA ID number.");
@@ -345,7 +361,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
       gender: "",
       citizenship: "",
     });
-  };
+  }, [idNumber, confirmIdNumber, runVerification]);
 
   // ─── Load profile on mount ───────────────────────────────────────────────
   useEffect(() => {
@@ -355,9 +371,13 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         const cached = authService.getCachedUser();
         if (cached) {
           setUserProfile(cached);
+          userProfileRef.current = cached;
         } else {
           const fresh = await authService.getCurrentUser();
-          if (!cancelled) setUserProfile(fresh);
+          if (!cancelled) {
+            setUserProfile(fresh);
+            userProfileRef.current = fresh;
+          }
         }
       } catch {
         // non-fatal
