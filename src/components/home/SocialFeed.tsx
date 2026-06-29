@@ -239,7 +239,7 @@ interface GalleryImage {
 interface PostMediaGalleryProps {
   items: GalleryImage[];
   onImageClick?: (index: number) => void;
-  onRemove?: (index: number) => void; // new: for compose preview removal
+  onRemove?: (index: number) => void;
 }
 
 const PostMediaGallery: React.FC<PostMediaGalleryProps> = ({
@@ -266,7 +266,6 @@ const PostMediaGallery: React.FC<PostMediaGalleryProps> = ({
     },
   });
 
-  // Helper to render an image with an optional remove button
   const renderImageWithRemove = (
     src: string,
     alt: string,
@@ -390,7 +389,6 @@ const PostMediaGallery: React.FC<PostMediaGalleryProps> = ({
   );
 };
 
-// Gallery styles (unchanged)
 const styles = {
   singleContainer: { borderRadius: 12, overflow: "hidden", marginBottom: 12 },
   singleImage: {
@@ -472,7 +470,7 @@ const styles = {
   moreText: { color: "#fff", fontSize: 24, fontWeight: 700 },
 };
 
-// ─── CommentThread (unchanged) ──────────────────────────────────────────────
+// ─── CommentThread ──────────────────────────────────────────────────────────────
 
 interface CommentThreadProps {
   postId: number;
@@ -671,10 +669,12 @@ const SocialFeed: React.FC = () => {
     error,
     load,
     refresh,
+    loadMore,
     toggleLike,
     togglePin,
     createPost,
     deletePost,
+    hasMore,
   } = useFeed();
 
   const [showCompose, setShowCompose] = useState(false);
@@ -692,6 +692,36 @@ const SocialFeed: React.FC = () => {
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const [lightboxIndex, setLightboxIndex] = useState(0);
 
+  // ── Infinite scroll ────────────────────────────────────────────────────────
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // Load first page on mount
+  useEffect(() => {
+    load();
+  }, [load]); // load() in hook already fetches page 1
+
+  // IntersectionObserver to trigger loadMore
+  useEffect(() => {
+    if (!sentinelRef.current) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (
+          entries[0].isIntersecting &&
+          hasMore &&
+          !isLoading &&
+          !isRefreshing
+        ) {
+          loadMore();
+        }
+      },
+      { rootMargin: "0px 0px 100px 0px" }, // start loading slightly before reaching the bottom
+    );
+    observer.observe(sentinelRef.current);
+    return () => observer.disconnect();
+  }, [hasMore, isLoading, isRefreshing, loadMore]);
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+
   const openLightbox = useCallback((images: string[], index: number) => {
     setLightboxImages(images);
     setLightboxIndex(index);
@@ -708,10 +738,6 @@ const SocialFeed: React.FC = () => {
     [authorFirst, authorLast].filter(Boolean).join(" ") || user?.email || "You";
   const authorInitials =
     ((authorFirst[0] ?? "") + (authorLast[0] ?? "")).toUpperCase() || "?";
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   const handleMediaSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
@@ -780,10 +806,16 @@ const SocialFeed: React.FC = () => {
     await deletePost(postId);
   };
 
+  const handleRefresh = useCallback(() => {
+    refresh(); // resets to page 1 internally
+  }, [refresh]);
+
   const sortedPosts = [...posts].sort((a, b) => {
     if (a.is_pinned === b.is_pinned) return 0;
     return a.is_pinned ? -1 : 1;
   });
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="page-section">
@@ -792,7 +824,7 @@ const SocialFeed: React.FC = () => {
         <span className="section-title">Community feed</span>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <button
-            onClick={refresh}
+            onClick={handleRefresh}
             disabled={isRefreshing}
             style={{
               border: "none",
@@ -882,10 +914,8 @@ const SocialFeed: React.FC = () => {
           {mediaPreviews.length > 0 && (
             <PostMediaGallery
               items={mediaPreviews}
-              onRemove={removeMedia} // 👈 enables remove buttons
+              onRemove={removeMedia}
               onImageClick={(index) => {
-                // optional: also allow clicking preview to open lightbox before posting?
-                // but we don't have resolved URLs for data URLs, we could just open with data URLs
                 const urls = mediaPreviews.map((item) => item.src);
                 openLightbox(urls, index);
               }}
@@ -971,41 +1001,43 @@ const SocialFeed: React.FC = () => {
         </div>
       )}
 
-      {/* Skeletons */}
-      {isLoading &&
-        posts.length === 0 &&
-        [1, 2, 3].map((i) => (
-          <div
-            className="post-card"
-            key={`skeleton-${i}`}
-            style={{ opacity: 0.4 }}
-          >
-            <div className="post-header">
-              <div
-                className="avatar avatar-md"
-                style={{ background: "var(--border)" }}
-              />
-            </div>
-            <div className="post-meta">
+      {/* Skeletons – only on initial load (posts empty) */}
+      {isLoading && posts.length === 0 && (
+        <>
+          {[1, 2, 3].map((i) => (
+            <div
+              className="post-card"
+              key={`skeleton-${i}`}
+              style={{ opacity: 0.4 }}
+            >
+              <div className="post-header">
+                <div
+                  className="avatar avatar-md"
+                  style={{ background: "var(--border)" }}
+                />
+              </div>
+              <div className="post-meta">
+                <div
+                  style={{
+                    height: 12,
+                    width: 120,
+                    background: "var(--border)",
+                    borderRadius: 4,
+                  }}
+                />
+              </div>
               <div
                 style={{
                   height: 12,
-                  width: 120,
                   background: "var(--border)",
                   borderRadius: 4,
+                  marginBottom: 6,
                 }}
               />
             </div>
-            <div
-              style={{
-                height: 12,
-                background: "var(--border)",
-                borderRadius: 4,
-                marginBottom: 6,
-              }}
-            />
-          </div>
-        ))}
+          ))}
+        </>
+      )}
 
       {/* Posts */}
       {sortedPosts.map((post, index) => {
@@ -1071,7 +1103,6 @@ const SocialFeed: React.FC = () => {
                     openLightbox(resolvedImages, index);
                   }
                 }}
-                // no onRemove → no remove buttons in posts
               />
             )}
 
@@ -1128,6 +1159,43 @@ const SocialFeed: React.FC = () => {
         );
       })}
 
+      {/* ─── Infinite scroll indicators ──────────────────────────────────── */}
+
+      {/* Loading more spinner (only when we have posts and are fetching more) */}
+      {isLoading && posts.length > 0 && (
+        <div style={{ textAlign: "center", padding: "20px 0" }}>
+          <RefreshCw
+            size={20}
+            style={{ animation: "spin 1s linear infinite" }}
+          />
+          <p style={{ fontSize: 13, color: "var(--text-muted)" }}>
+            Loading more…
+          </p>
+        </div>
+      )}
+
+      {/* End of feed message */}
+      {!hasMore && posts.length > 0 && (
+        <p
+          style={{
+            textAlign: "center",
+            fontSize: 13,
+            color: "var(--text-muted)",
+            padding: "10px 0",
+          }}
+        >
+          You’ve seen all posts
+        </p>
+      )}
+
+      {hasMore && (
+        <div
+          ref={sentinelRef}
+          style={{ height: 10, background: "transparent" }}
+        />
+      )}
+
+      {/* Empty state */}
       {!isLoading && !error && posts.length === 0 && (
         <div className="empty-state">
           <span className="empty-icon">📢</span>
