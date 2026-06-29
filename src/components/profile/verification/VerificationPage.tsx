@@ -1,5 +1,4 @@
-
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { X, RefreshCw, Camera } from "lucide-react";
 import { authService } from "../../../services/authService";
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
@@ -8,590 +7,754 @@ interface VerifyIDPageProps {
   onBack: () => void;
 }
 
+// ─── SA ID barcode parsed shape ──────────────────────────────────────────────
+interface ParsedID {
+  idNumber: string;
+  surname: string;
+  fullNames: string;
+  first_name: string;
+  middle_names: string;
+  last_name: string;
+  date_of_birth: string;
+  gender: string;
+  citizenship: string;
+}
+
+type VerifyStep =
+  | "loading"
+  | "scanning"
+  | "permission-denied"
+  | "processing"
+  | "manual";
+
 export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
-  const [loading, setLoading] = useState(true);
-  const [scanning, setScanning] = useState(false);
-  const [processing, setProcessing] = useState(false);
+  const [step, setStep] = useState<VerifyStep>("loading");
   const [userProfile, setUserProfile] = useState<any>(null);
-  const [showManual, setShowManual] = useState(false);
   const [idNumber, setIdNumber] = useState("");
   const [confirmIdNumber, setConfirmIdNumber] = useState("");
-  const [permissionDenied, setPermissionDenied] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [debugInfo, setDebugInfo] = useState<string>("");
+  const [statusMsg, setStatusMsg] = useState(
+    "Point camera at the barcode on the back of your ID",
+  );
 
   const scannerRef = useRef<Html5Qrcode | null>(null);
-  const scannerContainerId = "scanner-container";
+  const CONTAINER_ID = "qr-scanner-box";
 
-  // ─── Request camera permission ──────────────────────────────────────────
-  const requestCameraPermission = async (): Promise<boolean> => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "environment",
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-      });
-      stream.getTracks().forEach((track) => track.stop());
-      return true;
-    } catch (err) {
-      console.error("Permission error:", err);
-      return false;
-    }
-  };
-
-  // ─── Start scanner with PDF417 support ─────────────────────────────────
-  const startScanner = async () => {
-    const hasPermission = await requestCameraPermission();
-    if (!hasPermission) {
-      setPermissionDenied(true);
-      setCameraError("Camera access is required.");
-      return;
-    }
-
-    try {
-      setScanning(true);
-      setPermissionDenied(false);
-      setCameraError(null);
-      setDebugInfo("Initializing scanner...");
-
-      const scanner = new Html5Qrcode(scannerContainerId);
-      scannerRef.current = scanner;
-
-      const config = {
-        fps: 15,
-        qrbox: { width: 280, height: 280 },
-        aspectRatio: 1.0,
-        formatsToSupport: [
-          Html5QrcodeSupportedFormats.PDF_417,
-          Html5QrcodeSupportedFormats.QR_CODE,
-        ],
-      };
-
-      setDebugInfo("Camera starting...");
-
-      await scanner.start(
-        { facingMode: "environment" },
-        config,
-        (decodedText) => {
-          setDebugInfo(`Detected: ${decodedText.substring(0, 30)}...`);
-          onScanSuccess(decodedText);
-        },
-        (errorMessage) => {
-          setDebugInfo(`Scanning... (${errorMessage})`);
-        },
-      );
-      setDebugInfo("Scanner ready – point at barcode.");
-    } catch (err: any) {
-      console.error("Scanner start error:", err);
-      setCameraError("Unable to start the camera.");
-      setScanning(false);
-    }
-  };
-
-  const stopScanner = async () => {
+  // ─── Stop scanner ────────────────────────────────────────────────────────
+  const stopScanner = useCallback(async () => {
     if (scannerRef.current) {
       try {
-        await scannerRef.current.stop();
+        const state = (scannerRef.current as any).getState?.();
+        // 2 = SCANNING, 3 = PAUSED
+        if (state === 2 || state === 3) {
+          await scannerRef.current.stop();
+        }
         scannerRef.current.clear();
-        scannerRef.current = null;
-      } catch (err) {
-        console.error("Error stopping scanner", err);
+      } catch {
+        // ignore stop errors
+      }
+      scannerRef.current = null;
+    }
+  }, []);
+
+  // ─── SA ID barcode parser (matches mobile implementation) ────────────────
+  const parseSAIDBarcode = (data: string): ParsedID => {
+    let idNumber = "";
+    let surname = "";
+    let fullNames = "";
+    let dateOfBirth = "";
+    let gender = "";
+    let citizenship = "";
+
+    const idMatch = data.match(/\d{13}/);
+    if (idMatch) idNumber = idMatch[0];
+
+    const parts = data.split("|");
+    if (parts.length >= 6) {
+      surname = parts[0].trim();
+      fullNames = parts[1].trim();
+      gender = parts[2].trim();
+      dateOfBirth = parts[5].trim();
+      citizenship = parts[7]?.trim() || "";
+    } else {
+      const simpleParts = data.split(/[|,;]/);
+      if (simpleParts.length >= 2) {
+        surname = simpleParts[0].trim();
+        fullNames = simpleParts[1].trim();
       }
     }
-    setScanning(false);
+
+    const nameParts = fullNames.split(/\s+/);
+    const firstName = nameParts[0] || "";
+    const middleNames = nameParts.slice(1).join(" ") || "";
+
+    return {
+      idNumber,
+      surname,
+      fullNames,
+      first_name: firstName,
+      middle_names: middleNames,
+      last_name: surname,
+      date_of_birth: dateOfBirth,
+      gender:
+        gender === "M"
+          ? "male"
+          : gender === "F"
+            ? "female"
+            : gender.toLowerCase(),
+      citizenship,
+    };
   };
 
-  // ─── Simplified Parser – Just extracts ID number ──────────────────────
-  const extractIDNumber = (data: string): string => {
-    const cleaned = data.replace(/\s+/g, " ").trim();
-    // Try to find a 13-digit number
-    const match = cleaned.match(/\b\d{13}\b/);
-    if (match) return match[0];
-    // fallback: any 13-digit sequence
-    const anyMatch = cleaned.match(/\d{13}/);
-    return anyMatch ? anyMatch[0] : "";
-  };
-
-  // ─── Scan success ──────────────────────────────────────────────────────
-  const onScanSuccess = async (decodedText: string) => {
-    if (processing) return;
-    await stopScanner();
-    setProcessing(true);
-
-    try {
-      const idNumber = extractIDNumber(decodedText);
-      if (!idNumber || idNumber.length !== 13) {
-        const rawPreview =
-          decodedText.length > 100
-            ? decodedText.substring(0, 100) + "…"
-            : decodedText;
-        const confirmManual = window.confirm(
-          `Could not extract a valid 13-digit ID number from the barcode.\n\nRaw data:\n${rawPreview}\n\nDo you want to enter the ID manually?`,
-        );
-        if (confirmManual) {
-          setShowManual(true);
-        }
-        setProcessing(false);
-        startScanner();
-        return;
-      }
-
-      // ─── Validate with backend using authService ──────────────────
-      const validateRes = await authService.validateIDNumber(idNumber);
-
-      if (!validateRes.success) {
-        alert(validateRes.message || "Invalid ID number. Please try again.");
-        setProcessing(false);
-        startScanner();
-        return;
-      }
-
-      const extracted = validateRes.extracted_info;
-
-      // ─── Build display data from backend ───────────────────────────
-      const displayName =
-        userProfile?.first_name && userProfile?.last_name
-          ? `${userProfile.first_name} ${userProfile.last_name}`
-          : extracted?.full_name || "Not available";
-
-      const confirmVerify = window.confirm(
-        `ID Scanned Successfully\n\n` +
-          `ID Number: ${idNumber}\n` +
-          `Name on Profile: ${displayName}\n` +
-          `DOB (from ID): ${extracted?.date_of_birth || "Not available"}\n` +
-          `Gender (from ID): ${extracted?.gender || "Not available"}\n\n` +
-          `Would you like to verify this ID?`,
-      );
-
-      if (!confirmVerify) {
-        setProcessing(false);
-        startScanner();
-        return;
-      }
-
-      // ─── Proceed to verification ──────────────────────────────────
-      await handleVerifyNow(idNumber, extracted);
-    } catch (error: any) {
-      console.error("Scan error:", error);
-      alert(error?.message || "Failed to process ID. Please try again.");
-      setProcessing(false);
-      startScanner();
-    }
-  };
-
-  // ─── Verification submission (uses backend data) ──────────────────────
-  const handleVerifyNow = async (idNumber: string, extracted: any) => {
-    try {
-      // Compare with profile if needed (mismatches)
-      const comparison = compareWithProfile(extracted);
-      if (!comparison.isVerified && comparison.mismatches.length > 0) {
-        const confirmContinue = window.confirm(
-          `The following information differs from your profile:\n\n${comparison.mismatches.join("\n")}\n\nDo you want to continue with verification?`,
-        );
-        if (!confirmContinue) {
-          setProcessing(false);
-          startScanner();
-          return;
-        }
-      }
-
-      // Use authService to verify
-      const verifyRes = await authService.verifyID(idNumber);
-
-      if (verifyRes.success) {
-        alert(
-          "Verification Successful! 🎉\n\nYour ID has been verified successfully. You now have a higher trust score and priority application processing.",
-        );
-        onBack();
-      } else {
-        alert(verifyRes.message || "Unable to verify ID. Please try again.");
-        setProcessing(false);
-        startScanner();
-      }
-    } catch (error: any) {
-      console.error("Verification error:", error);
-      alert(error?.message || "Failed to verify ID. Please try again.");
-      setProcessing(false);
-      startScanner();
-    }
-  };
-
-  // ─── Profile comparison (uses extracted data from backend) ────────────
+  // ─── Profile comparison helpers (matches mobile implementation) ──────────
   const normalizeString = (str: string): string =>
     str.toLowerCase().trim().replace(/\s+/g, " ");
+
+  const nameMatchesAny = (
+    profileName: string,
+    idFullNames: string,
+  ): boolean => {
+    const norm = normalizeString(profileName);
+    const idParts = normalizeString(idFullNames).split(/\s+/);
+    return idParts.some(
+      (p) => p === norm || norm.includes(p) || p.includes(norm),
+    );
+  };
 
   const datesMatch = (profileDate: string, idDate: string): boolean => {
     if (!profileDate || !idDate) return false;
     const profileDateObj = new Date(profileDate);
-    const idDateObj = new Date(idDate);
-    return profileDateObj.toDateString() === idDateObj.toDateString();
-  };
-
-  const compareWithProfile = (extracted: any) => {
-    const mismatches: string[] = [];
-
-    if (userProfile?.first_name || userProfile?.last_name) {
-      const profileFullName = normalizeString(
-        `${userProfile.first_name || ""} ${userProfile.last_name || ""}`,
-      );
-      const extractedName = normalizeString(extracted?.full_name || "");
-      if (
-        extractedName &&
-        !profileFullName.includes(extractedName) &&
-        !extractedName.includes(profileFullName)
-      ) {
-        mismatches.push(
-          `Name: Profile shows "${profileFullName}", ID shows "${extracted.full_name}"`,
+    const idDateParts = idDate.split(/\s+/);
+    if (idDateParts.length === 3) {
+      const months: Record<string, number> = {
+        JAN: 0,
+        FEB: 1,
+        MAR: 2,
+        APR: 3,
+        MAY: 4,
+        JUN: 5,
+        JUL: 6,
+        AUG: 7,
+        SEP: 8,
+        OCT: 9,
+        NOV: 10,
+        DEC: 11,
+      };
+      const day = parseInt(idDateParts[0]);
+      const month = months[idDateParts[1].toUpperCase()];
+      const year = parseInt(idDateParts[2]);
+      if (!isNaN(day) && month !== undefined && !isNaN(year)) {
+        return (
+          profileDateObj.toDateString() ===
+          new Date(year, month, day).toDateString()
         );
       }
     }
+    return false;
+  };
 
-    if (userProfile?.demographics?.date_of_birth && extracted?.date_of_birth) {
+  const compareWithProfile = (parsed: ParsedID): { mismatches: string[] } => {
+    const mismatches: string[] = [];
+
+    if (userProfile?.first_name && parsed.fullNames) {
+      if (!nameMatchesAny(userProfile.first_name, parsed.fullNames)) {
+        mismatches.push(
+          `Name: profile has "${userProfile.first_name}" but it was not found on the ID`,
+        );
+      }
+    }
+    if (userProfile?.last_name && parsed.surname) {
+      if (
+        normalizeString(userProfile.last_name) !==
+        normalizeString(parsed.surname)
+      ) {
+        mismatches.push(
+          `Surname: profile has "${userProfile.last_name}", ID shows "${parsed.surname}"`,
+        );
+      }
+    }
+    if (userProfile?.demographics?.date_of_birth && parsed.date_of_birth) {
       if (
         !datesMatch(
           userProfile.demographics.date_of_birth,
-          extracted.date_of_birth,
+          parsed.date_of_birth,
         )
       ) {
         mismatches.push(
-          `Date of birth: Profile shows ${userProfile.demographics.date_of_birth}, ID shows ${extracted.date_of_birth}`,
+          `Date of birth: profile shows ${userProfile.demographics.date_of_birth}, ID shows ${parsed.date_of_birth}`,
         );
       }
     }
-
-    if (userProfile?.demographics?.gender_id && extracted?.gender) {
-      const genderMapping: { [key: string]: number } = { male: 1, female: 2 };
-      const expectedGenderId = genderMapping[extracted.gender.toLowerCase()];
-      if (userProfile.demographics.gender_id !== expectedGenderId) {
+    if (userProfile?.demographics?.gender_id && parsed.gender) {
+      const genderMap: Record<string, number> = { male: 1, female: 2 };
+      const expected = genderMap[parsed.gender.toLowerCase()];
+      if (userProfile.demographics.gender_id !== expected) {
         mismatches.push(
-          `Gender: Profile shows ID ${userProfile.demographics.gender_id}, ID shows ${extracted.gender}`,
+          `Gender: profile shows ID ${userProfile.demographics.gender_id}, ID shows ${parsed.gender}`,
         );
       }
     }
 
-    return { mismatches, isVerified: mismatches.length === 0 };
+    return { mismatches };
   };
 
-  // ─── Manual entry ──────────────────────────────────────────────────────
-  const handleManualVerify = async () => {
-    const trimmed = idNumber.trim();
-    if (!trimmed || trimmed.length !== 13) {
-      alert("Please enter a valid 13-digit SA ID number.");
+  // ─── Submit to backend ───────────────────────────────────────────────────
+  const submitVerification = useCallback(
+    async (idNum: string) => {
+      setStatusMsg("Submitting verification…");
+      try {
+        const res = await authService.verifyID(idNum);
+        if (res.success) {
+          alert(
+            "ID verified successfully!\n\nYou now have a higher trust score and priority application processing.",
+          );
+          onBack();
+        } else {
+          alert(res.message || "Verification failed. Please try again.");
+          setStep("scanning");
+        }
+      } catch (err: any) {
+        alert(err?.message || "Something went wrong. Please try again.");
+        setStep("scanning");
+      }
+    },
+    [onBack],
+  );
+
+  // ─── Full verify flow (validate → confirm → submit) ──────────────────────
+  const runVerification = useCallback(
+    async (parsed: ParsedID) => {
+      setStep("processing");
+      setStatusMsg("Validating ID number…");
+
+      try {
+        const validateRes = await authService.validateIDNumber(parsed.idNumber);
+        if (!validateRes.success) {
+          alert(validateRes.message || "Invalid ID number. Please try again.");
+          setStep("scanning");
+          return;
+        }
+
+        const { mismatches } = compareWithProfile(parsed);
+
+        const confirmMsg =
+          `ID scanned\n\n` +
+          `ID Number: ${parsed.idNumber}\n` +
+          (parsed.fullNames ? `Name on ID: ${parsed.fullNames}\n` : "") +
+          (parsed.surname ? `Surname: ${parsed.surname}\n` : "") +
+          (parsed.date_of_birth ? `DOB: ${parsed.date_of_birth}\n` : "") +
+          (parsed.gender ? `Gender: ${parsed.gender}\n` : "") +
+          (mismatches.length
+            ? `\nMismatches with your profile:\n${mismatches.join("\n")}\n`
+            : "") +
+          `\nProceed with verification?`;
+
+        if (!window.confirm(confirmMsg)) {
+          setStep("scanning");
+          return;
+        }
+
+        await submitVerification(parsed.idNumber);
+      } catch (err: any) {
+        alert(err?.message || "Something went wrong. Please try again.");
+        setStep("scanning");
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [userProfile, submitVerification],
+  );
+
+  // ─── Start scanner ───────────────────────────────────────────────────────
+  const startScanner = useCallback(async () => {
+    await stopScanner();
+
+    // Check camera permission first
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" },
+      });
+      stream.getTracks().forEach((t) => t.stop());
+    } catch {
+      setCameraError(
+        "Camera permission was denied. Allow camera access and try again.",
+      );
+      setStep("permission-denied");
       return;
     }
-    if (trimmed !== confirmIdNumber.trim()) {
+
+    try {
+      // formatsToSupport belongs in the CONSTRUCTOR, not in scanner.start()
+      const scanner = new Html5Qrcode(CONTAINER_ID, {
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.PDF_417,
+          Html5QrcodeSupportedFormats.QR_CODE,
+          Html5QrcodeSupportedFormats.DATA_MATRIX,
+          Html5QrcodeSupportedFormats.AZTEC,
+        ],
+        verbose: false,
+      });
+      scannerRef.current = scanner;
+
+      await scanner.start(
+        { facingMode: "environment" },
+        { fps: 15 }, // only fps here — formatsToSupport is NOT valid here
+        async (decodedText) => {
+          if (!scannerRef.current) return; // re-entrancy guard
+          await stopScanner();
+
+          const parsed = parseSAIDBarcode(decodedText);
+
+          if (!parsed.idNumber || parsed.idNumber.length !== 13) {
+            const tryManual = window.confirm(
+              `Could not extract a valid 13-digit ID number.\n\n` +
+                `Raw data: ${decodedText.substring(0, 100)}\n\n` +
+                `Enter ID manually?`,
+            );
+            setStep(tryManual ? "manual" : "scanning");
+            return;
+          }
+
+          await runVerification(parsed);
+        },
+        () => {
+          // Per-frame decode failures are normal — ignore
+        },
+      );
+    } catch (err: any) {
+      console.error("Scanner start error:", err);
+      setCameraError("Unable to start the camera. " + (err?.message || ""));
+      setStep("permission-denied");
+    }
+  }, [stopScanner, runVerification]);
+
+  // ─── Manual entry submit ─────────────────────────────────────────────────
+  const handleManualVerify = async () => {
+    const id = idNumber.trim();
+    if (!/^\d{13}$/.test(id)) {
+      alert("Enter a valid 13-digit SA ID number.");
+      return;
+    }
+    if (id !== confirmIdNumber.trim()) {
       alert("ID numbers do not match.");
       return;
     }
-
-    setProcessing(true);
-    try {
-      const validateRes = await authService.validateIDNumber(trimmed);
-      if (!validateRes.success) {
-        alert(validateRes.message || "Invalid ID number");
-        setProcessing(false);
-        return;
-      }
-      const extracted = validateRes.extracted_info;
-      const comparison = compareWithProfile(extracted);
-      if (!comparison.isVerified && comparison.mismatches.length > 0) {
-        const confirmContinue = window.confirm(
-          `The following information differs from your profile:\n\n${comparison.mismatches.join("\n")}\n\nDo you want to continue with verification?`,
-        );
-        if (!confirmContinue) {
-          setProcessing(false);
-          return;
-        }
-      }
-      const verifyRes = await authService.verifyID(trimmed);
-      if (verifyRes.success) {
-        alert("Verification Successful! 🎉");
-        onBack();
-      } else {
-        alert(verifyRes.message || "Verification failed.");
-        setProcessing(false);
-      }
-    } catch (error: any) {
-      alert(error?.message || "An error occurred.");
-      setProcessing(false);
-    }
+    // Wrap in ParsedID shape — fields are empty since we don't have barcode data
+    await runVerification({
+      idNumber: id,
+      surname: "",
+      fullNames: "",
+      first_name: "",
+      middle_names: "",
+      last_name: "",
+      date_of_birth: "",
+      gender: "",
+      citizenship: "",
+    });
   };
 
-  // ─── Load profile ──────────────────────────────────────────────────────
+  // ─── Load profile on mount ───────────────────────────────────────────────
   useEffect(() => {
-    const loadProfile = async () => {
+    let cancelled = false;
+    (async () => {
       try {
-        const user = authService.getCachedUser();
-        if (user) {
-          setUserProfile(user);
+        const cached = authService.getCachedUser();
+        if (cached) {
+          setUserProfile(cached);
         } else {
-          // Try to fetch fresh user data
-          const freshUser = await authService.getCurrentUser();
-          setUserProfile(freshUser);
+          const fresh = await authService.getCurrentUser();
+          if (!cancelled) setUserProfile(fresh);
         }
-      } catch (err) {
-        console.error("Failed to load profile", err);
-      } finally {
-        setLoading(false);
-        startScanner();
+      } catch {
+        // non-fatal — profile comparison just won't run
       }
-    };
-    loadProfile();
-
+      if (!cancelled) setStep("scanning");
+    })();
     return () => {
-      if (scannerRef.current) {
-        scannerRef.current.stop().catch(console.error);
-        scannerRef.current.clear();
-      }
+      cancelled = true;
+      stopScanner();
     };
-  }, []);
+  }, [stopScanner]);
 
-  // ─── Render ──────────────────────────────────────────────────────────────
-  if (loading) {
+  // ─── Kick off scanner whenever step becomes "scanning" ───────────────────
+  // Separated from the load effect so the DOM div is guaranteed to exist
+  const isScanning = step === "scanning";
+  useEffect(() => {
+    if (!isScanning) return;
+    // Small delay lets React flush the render so #qr-scanner-box is in the DOM
+    const t = setTimeout(() => startScanner(), 120);
+    return () => clearTimeout(t);
+  }, [isScanning, startScanner]);
+
+  // ─── Cleanup on unmount ──────────────────────────────────────────────────
+  useEffect(() => {
+    return () => {
+      stopScanner();
+    };
+  }, [stopScanner]);
+
+  // ─── Render: loading ─────────────────────────────────────────────────────
+  if (step === "loading") {
     return (
-      <div
-        className="pc-root"
-        style={{ justifyContent: "center", alignItems: "center" }}
-      >
-        <RefreshCw size={32} className="pc-spin" />
-        <span style={{ marginTop: 16, color: "#9ca3af" }}>
+      <div style={s.root}>
+        <RefreshCw
+          size={32}
+          style={{ animation: "spin .8s linear infinite", color: "#fb8500" }}
+        />
+        <span style={{ marginTop: 16, color: "#9ca3af", fontSize: 14 }}>
           Loading your profile…
         </span>
+        <style>{KEYFRAMES}</style>
       </div>
     );
   }
 
-  if (permissionDenied) {
+  // ─── Render: permission denied ───────────────────────────────────────────
+  if (step === "permission-denied") {
     return (
       <div
-        className="pc-root"
-        style={{ justifyContent: "center", alignItems: "center", padding: 20 }}
+        style={{
+          ...s.root,
+          justifyContent: "center",
+          alignItems: "center",
+          padding: 24,
+        }}
       >
-        <div className="pc-permission-card">
-          <div className="pc-permission-icon">
-            <Camera size={48} color="#fb8500" />
+        <div style={s.permCard}>
+          <div style={s.permIcon}>
+            <Camera size={40} color="#fb8500" />
           </div>
-          <h2 className="pc-permission-title">Camera Access Required</h2>
-          <p className="pc-permission-message">
-            {cameraError || "We need camera access to scan your ID barcode."}
+          <h2 style={s.permTitle}>Camera access needed</h2>
+          <p style={s.permMsg}>
+            {cameraError || "Allow camera access to scan your ID barcode."}
           </p>
-          <div className="pc-permission-actions">
-            <button className="pc-btn pc-btn-primary" onClick={startScanner}>
-              Grant Permission
-            </button>
-            <button
-              className="pc-btn pc-btn-secondary"
-              onClick={() => setShowManual(true)}
-            >
-              Enter ID manually
-            </button>
-          </div>
-          <p className="pc-permission-note">
-            If you previously blocked access, click "Grant Permission" to allow
-            it now.
-          </p>
+          <button style={s.btnPrimary} onClick={() => setStep("scanning")}>
+            Try again
+          </button>
+          <button
+            style={{ ...s.btnSecondary, marginTop: 10 }}
+            onClick={() => setStep("manual")}
+          >
+            Enter ID manually
+          </button>
         </div>
-        {showManual && (
-          <ManualEntryModal
-            {...{
-              idNumber,
-              setIdNumber,
-              confirmIdNumber,
-              setConfirmIdNumber,
-              handleManualVerify,
-              setShowManual,
-            }}
-          />
-        )}
+        <style>{KEYFRAMES}</style>
       </div>
     );
   }
 
-  return (
-    <div className="pc-root" style={{ overflow: "hidden", background: "#000" }}>
+  // ─── Render: manual entry ────────────────────────────────────────────────
+  if (step === "manual") {
+    return (
       <div
-        className="pc-header"
         style={{
-          background: "transparent",
-          position: "absolute",
-          top: 0,
-          zIndex: 10,
+          ...s.root,
+          background: "#fff",
+          justifyContent: "center",
+          alignItems: "center",
+          padding: 24,
         }}
       >
-        <button
-          className="pc-header__back"
-          onClick={onBack}
-          style={{ background: "rgba(0,0,0,0.5)" }}
-        >
+        <div style={{ width: "100%", maxWidth: 400 }}>
+          <button
+            onClick={() => setStep("scanning")}
+            style={{
+              background: "none",
+              border: "none",
+              color: "#fb8500",
+              fontWeight: 600,
+              fontSize: 14,
+              cursor: "pointer",
+              marginBottom: 20,
+              padding: 0,
+            }}
+          >
+            ← Back to scanner
+          </button>
+          <h2
+            style={{
+              fontSize: 20,
+              fontWeight: 700,
+              marginBottom: 20,
+              color: "#1a1a2e",
+            }}
+          >
+            Enter ID manually
+          </h2>
+          <div style={s.inputGroup}>
+            <label style={s.label}>SA ID number</label>
+            <input
+              style={s.input}
+              type="text"
+              value={idNumber}
+              onChange={(e) =>
+                setIdNumber(e.target.value.replace(/\D/g, "").slice(0, 13))
+              }
+              placeholder="13-digit SA ID number"
+              maxLength={13}
+            />
+          </div>
+          <div style={s.inputGroup}>
+            <label style={s.label}>Confirm ID number</label>
+            <input
+              style={s.input}
+              type="text"
+              value={confirmIdNumber}
+              onChange={(e) =>
+                setConfirmIdNumber(
+                  e.target.value.replace(/\D/g, "").slice(0, 13),
+                )
+              }
+              placeholder="Re-enter ID number"
+              maxLength={13}
+            />
+          </div>
+          <button
+            style={{ ...s.btnPrimary, width: "100%", marginTop: 8 }}
+            onClick={handleManualVerify}
+          >
+            Verify
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Render: processing ──────────────────────────────────────────────────
+  if (step === "processing") {
+    return (
+      <div
+        style={{
+          ...s.root,
+          background: "#000",
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        <RefreshCw
+          size={40}
+          style={{ animation: "spin .8s linear infinite", color: "#fff" }}
+        />
+        <p style={{ color: "#fff", marginTop: 16, fontSize: 16 }}>
+          {statusMsg}
+        </p>
+        <style>{KEYFRAMES}</style>
+      </div>
+    );
+  }
+
+  // ─── Render: scanning ────────────────────────────────────────────────────
+  return (
+    <div style={{ ...s.root, background: "#000" }}>
+      {/* Header */}
+      <div style={s.header}>
+        <button onClick={onBack} style={s.backBtn}>
           <X size={20} color="#fff" />
         </button>
-        <h1 className="pc-header__title" style={{ color: "#fff" }}>
-          Scan ID Barcode
-        </h1>
+        <h1 style={s.headerTitle}>Scan ID barcode</h1>
         <div style={{ width: 40 }} />
       </div>
 
-      <div style={{ flex: 1, position: "relative" }}>
-        <div
-          id={scannerContainerId}
-          style={{ width: "100%", height: "100%" }}
-        />
-        <div className="pc-scan-overlay">
-          <div className="pc-scan-area">
-            <svg
-              width="60"
-              height="60"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="rgba(255,255,255,0.8)"
-              strokeWidth="2"
-            >
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <path d="M8 12h8" />
-              <path d="M12 8v8" />
-            </svg>
-            <p className="pc-scan-text">
-              Position the barcode on the back of your ID inside the frame
-            </p>
-            <p
-              style={{
-                color: "#aaa",
-                fontSize: 12,
-                marginTop: 8,
-                maxWidth: "80%",
-                wordBreak: "break-all",
-              }}
-            >
-              {debugInfo}
-            </p>
-          </div>
+      {/*
+        CRITICAL: explicit height in px/vh — html5-qrcode calls
+        element.offsetHeight internally. If that resolves to 0
+        (which "height: 100%" does in an unsized flex parent),
+        the library renders into a 0px box and captures no frames.
+      */}
+      <div
+        id={CONTAINER_ID}
+        style={{
+          width: "100%",
+          height: "calc(100vh - 60px)",
+          position: "relative",
+          overflow: "hidden",
+        }}
+      />
+
+      {/* Guide overlay — pointer-events:none so it doesn't block the video */}
+      <div style={s.overlay}>
+        <div style={s.scanFrame}>
+          <p style={s.scanHint}>{statusMsg}</p>
         </div>
-        {processing && (
-          <div className="pc-processing-overlay">
-            <RefreshCw
-              size={40}
-              className="pc-spin"
-              style={{ color: "#fff" }}
-            />
-            <p style={{ color: "#fff", marginTop: 16, fontSize: 16 }}>
-              Verifying your ID...
-            </p>
-          </div>
-        )}
       </div>
 
       <button
-        className="pc-manual-entry-btn"
-        onClick={() => setShowManual(!showManual)}
+        style={s.manualBtn}
+        onClick={() => {
+          stopScanner();
+          setStep("manual");
+        }}
       >
-        {showManual ? "Back to Scan" : "Enter ID manually"}
+        Enter ID manually
       </button>
 
-      {showManual && !processing && (
-        <ManualEntryModal
-          {...{
-            idNumber,
-            setIdNumber,
-            confirmIdNumber,
-            setConfirmIdNumber,
-            handleManualVerify,
-            setShowManual,
-          }}
-        />
-      )}
-
-      <style>{`
-        .pc-root { position: fixed; top:0; left:0; width:100%; height:100vh; background:#000; display:flex; flex-direction:column; z-index:1000; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-        .pc-header { display:flex; align-items:center; gap:12px; padding:14px 16px; width:100%; position:absolute; top:0; left:0; z-index:10; }
-        .pc-header__back { background:rgba(0,0,0,0.5); border:none; width:40px; height:40px; border-radius:50%; display:flex; align-items:center; justify-content:center; cursor:pointer; }
-        .pc-header__title { flex:1; margin:0; font-size:18px; font-weight:700; color:#fff; text-align:center; }
-        .pc-scan-overlay { position:absolute; top:0; left:0; width:100%; height:100%; display:flex; align-items:center; justify-content:center; pointer-events:none; }
-        .pc-scan-area { width:80%; max-width:320px; aspect-ratio:1/1; border:2px solid #fff; border-radius:12px; display:flex; flex-direction:column; align-items:center; justify-content:center; background:rgba(0,0,0,0.3); padding:20px; }
-        .pc-scan-text { color:#fff; font-size:14px; text-align:center; margin-top:16px; }
-        .pc-processing-overlay { position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:20; }
-        .pc-manual-entry-btn { position:absolute; bottom:40px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.7); border:1px solid rgba(255,255,255,0.3); color:#fff; padding:12px 24px; border-radius:30px; font-size:16px; font-weight:500; cursor:pointer; z-index:10; backdrop-filter:blur(4px); }
-        .pc-manual-entry-btn:hover { background:rgba(255,255,255,0.2); }
-        .pc-manual-modal { position:absolute; bottom:100px; left:50%; transform:translateX(-50%); width:90%; max-width:400px; z-index:30; }
-        .pc-manual-card { background:#fff; border-radius:16px; padding:24px; box-shadow:0 8px 32px rgba(0,0,0,0.5); }
-        .pc-input-group { margin-bottom:12px; }
-        .pc-input-group label { display:block; font-weight:600; font-size:14px; margin-bottom:4px; color:#1a1a2e; }
-        .pc-input-group input { width:100%; padding:10px 12px; border:2px solid #e5e7eb; border-radius:8px; font-size:16px; outline:none; }
-        .pc-input-group input:focus { border-color:#fb8500; }
-        .pc-btn { padding:10px 20px; border:none; border-radius:8px; font-weight:600; font-size:14px; cursor:pointer; flex:1; }
-        .pc-btn-primary { background:#fb8500; color:#fff; }
-        .pc-btn-primary:hover { background:#e07a00; }
-        .pc-btn-secondary { background:#e5e7eb; color:#1a1a2e; }
-        .pc-btn-secondary:hover { background:#d1d5db; }
-        .pc-permission-card { background:#fff; border-radius:20px; padding:32px 24px; max-width:400px; width:100%; text-align:center; box-shadow:0 8px 40px rgba(0,0,0,0.2); }
-        .pc-permission-icon { width:80px; height:80px; border-radius:50%; background:#fff3e0; display:flex; align-items:center; justify-content:center; margin:0 auto 16px; }
-        .pc-permission-title { font-size:20px; font-weight:700; color:#1a1a2e; margin-bottom:8px; }
-        .pc-permission-message { color:#6b7280; font-size:14px; line-height:1.6; margin-bottom:24px; }
-        .pc-permission-actions { display:flex; flex-direction:column; gap:12px; margin-bottom:16px; }
-        .pc-permission-actions .pc-btn { padding:12px; width:100%; }
-        .pc-permission-note { font-size:12px; color:#9ca3af; line-height:1.4; }
-        @keyframes pc-rotate { to { transform:rotate(360deg); } }
-        .pc-spin { animation: pc-rotate 0.8s linear infinite; }
-      `}</style>
+      <style>{KEYFRAMES}</style>
     </div>
   );
 };
 
-// ─── Manual entry modal ──────────────────────────────────────────────────────
-interface ManualEntryProps {
-  idNumber: string;
-  setIdNumber: (v: string) => void;
-  confirmIdNumber: string;
-  setConfirmIdNumber: (v: string) => void;
-  handleManualVerify: () => void;
-  setShowManual: (v: boolean) => void;
-}
+// ─── Constants ────────────────────────────────────────────────────────────────
+const KEYFRAMES = `@keyframes spin { to { transform: rotate(360deg); } }`;
 
-const ManualEntryModal: React.FC<ManualEntryProps> = ({
-  idNumber,
-  setIdNumber,
-  confirmIdNumber,
-  setConfirmIdNumber,
-  handleManualVerify,
-  setShowManual,
-}) => (
-  <div className="pc-manual-modal">
-    <div className="pc-manual-card">
-      <h3 style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>
-        Enter ID Manually
-      </h3>
-      <div className="pc-input-group">
-        <label>SA ID Number</label>
-        <input
-          type="text"
-          value={idNumber}
-          onChange={(e) => setIdNumber(e.target.value)}
-          placeholder="13-digit SA ID number"
-          maxLength={13}
-        />
-      </div>
-      <div className="pc-input-group">
-        <label>Confirm ID Number</label>
-        <input
-          type="text"
-          value={confirmIdNumber}
-          onChange={(e) => setConfirmIdNumber(e.target.value)}
-          placeholder="Confirm ID number"
-          maxLength={13}
-        />
-      </div>
-      <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
-        <button className="pc-btn pc-btn-primary" onClick={handleManualVerify}>
-          Verify
-        </button>
-        <button
-          className="pc-btn pc-btn-secondary"
-          onClick={() => setShowManual(false)}
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  </div>
-);
+// ─── Styles ───────────────────────────────────────────────────────────────────
+const s: Record<string, React.CSSProperties> = {
+  root: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    width: "100%",
+    height: "100vh",
+    display: "flex",
+    flexDirection: "column",
+    zIndex: 1000,
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    alignItems: "center",
+  },
+  header: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    padding: "14px 16px",
+    width: "100%",
+    background: "rgba(0,0,0,0.6)",
+    zIndex: 20,
+    height: 60,
+    boxSizing: "border-box",
+  },
+  backBtn: {
+    background: "rgba(255,255,255,0.15)",
+    border: "none",
+    width: 40,
+    height: 40,
+    borderRadius: "50%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+  },
+  headerTitle: {
+    flex: 1,
+    margin: 0,
+    fontSize: 18,
+    fontWeight: 700,
+    color: "#fff",
+    textAlign: "center",
+  },
+  overlay: {
+    position: "absolute",
+    top: 60,
+    left: 0,
+    width: "100%",
+    height: "calc(100vh - 60px)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    pointerEvents: "none",
+    zIndex: 10,
+  },
+  scanFrame: {
+    width: 280,
+    height: 180,
+    border: "2px solid rgba(251,133,0,0.8)",
+    borderRadius: 12,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    padding: "0 16px 16px",
+  },
+  scanHint: {
+    color: "#fff",
+    fontSize: 13,
+    textAlign: "center",
+    margin: 0,
+    textShadow: "0 1px 4px rgba(0,0,0,0.8)",
+    background: "rgba(0,0,0,0.4)",
+    borderRadius: 6,
+    padding: "4px 8px",
+  },
+  manualBtn: {
+    position: "absolute",
+    bottom: 40,
+    left: "50%",
+    transform: "translateX(-50%)",
+    background: "rgba(0,0,0,0.65)",
+    border: "1px solid rgba(255,255,255,0.3)",
+    color: "#fff",
+    padding: "12px 28px",
+    borderRadius: 30,
+    fontSize: 15,
+    fontWeight: 500,
+    cursor: "pointer",
+    zIndex: 20,
+    whiteSpace: "nowrap",
+  },
+  permCard: {
+    background: "#fff",
+    borderRadius: 20,
+    padding: "32px 24px",
+    maxWidth: 400,
+    width: "100%",
+    textAlign: "center",
+  },
+  permIcon: {
+    width: 72,
+    height: 72,
+    borderRadius: "50%",
+    background: "#fff3e0",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    margin: "0 auto 16px",
+  },
+  permTitle: {
+    fontSize: 20,
+    fontWeight: 700,
+    color: "#1a1a2e",
+    marginBottom: 8,
+  },
+  permMsg: {
+    color: "#6b7280",
+    fontSize: 14,
+    lineHeight: 1.6,
+    marginBottom: 24,
+  },
+  btnPrimary: {
+    background: "#fb8500",
+    color: "#fff",
+    border: "none",
+    padding: "12px 24px",
+    borderRadius: 8,
+    fontWeight: 600,
+    fontSize: 15,
+    cursor: "pointer",
+    width: "100%",
+  },
+  btnSecondary: {
+    background: "#f3f4f6",
+    color: "#1a1a2e",
+    border: "none",
+    padding: "12px 24px",
+    borderRadius: 8,
+    fontWeight: 600,
+    fontSize: 15,
+    cursor: "pointer",
+    width: "100%",
+  },
+  inputGroup: { marginBottom: 14 },
+  label: {
+    display: "block",
+    fontWeight: 600,
+    fontSize: 13,
+    marginBottom: 4,
+    color: "#374151",
+  },
+  input: {
+    width: "100%",
+    padding: "10px 12px",
+    border: "2px solid #e5e7eb",
+    borderRadius: 8,
+    fontSize: 16,
+    outline: "none",
+    boxSizing: "border-box",
+  },
+};

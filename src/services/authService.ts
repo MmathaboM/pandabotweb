@@ -1,4 +1,3 @@
-// src/services/authService.ts
 import api from "./api";
 
 export interface LoginPayload {
@@ -83,14 +82,6 @@ export interface AuthUser {
   programme_end?: string;
   full_name?: string;
   initials?: string;
-  demographics?: {
-    date_of_birth?: string;
-    gender_id?: number;
-    gender?: string;
-    race_id?: number;
-    race?: string;
-    disability?: string;
-  };
   stats?: {
     attendance_pct: number;
     weeks_remaining: number;
@@ -107,25 +98,6 @@ interface AuthResponse {
   expires_in?: number;
   user: AuthUser;
   message?: string;
-}
-
-// ─── ID Verification Response Types ──────────────────────────────────────
-export interface IDValidationResponse {
-  success: boolean;
-  message?: string;
-  extracted_info?: {
-    date_of_birth: string;
-    gender: string;
-    full_name?: string;
-    age?: number;
-  };
-}
-
-export interface IDVerificationResponse {
-  success: boolean;
-  message?: string;
-  is_verified?: boolean;
-  verification_status?: string;
 }
 
 const TOKEN_KEY = "pandabot_token";
@@ -168,7 +140,6 @@ function extractErrorMessage(err: any): string {
 }
 
 export const authService = {
-  // ─── Existing Auth Methods ──────────────────────────────────────────────
   async login(payload: LoginPayload): Promise<AuthUser> {
     try {
       const { data } = await api.post<AuthResponse>("/v1/auth/login", payload);
@@ -240,18 +211,18 @@ export const authService = {
     }
   },
 
-  async resetPassword(data: {
+  async resetPassword(payload: {
     email: string;
     token: string;
     password: string;
     password_confirmation: string;
   }): Promise<{ message: string }> {
     try {
-      const response = await api.post<{ message: string }>(
+      const { data } = await api.post<{ message: string }>(
         "/v1/auth/reset-password",
-        data,
+        payload,
       );
-      return response.data;
+      return data;
     } catch (err: any) {
       throw new Error(extractErrorMessage(err));
     }
@@ -264,7 +235,7 @@ export const authService = {
     try {
       const token = this.getToken();
       if (!token) throw new Error("Not authenticated");
-      const response = await api.put(
+      const { data } = await api.put(
         "/v1/auth/password",
         {
           current_password: currentPassword,
@@ -273,8 +244,8 @@ export const authService = {
         },
         { headers: { Authorization: `Bearer ${token}` } },
       );
-      if (!response.data.success) throw new Error(response.data.message);
-      return { message: response.data.message };
+      if (!data.success) throw new Error(data.message);
+      return { message: data.message };
     } catch (err: any) {
       throw new Error(extractErrorMessage(err));
     }
@@ -284,7 +255,7 @@ export const authService = {
     try {
       const currentToken = this.getToken();
       if (!currentToken) return null;
-      const response = await api.post<{
+      const { data } = await api.post<{
         success: boolean;
         token?: string;
         access_token?: string;
@@ -293,83 +264,83 @@ export const authService = {
         {},
         { headers: { Authorization: `Bearer ${currentToken}` } },
       );
-      if (!response.data.success) throw new Error("Refresh failed");
-      const newToken = response.data.access_token ?? response.data.token;
+      if (!data.success) throw new Error("Refresh failed");
+      const newToken = data.access_token ?? data.token;
       if (newToken) {
         localStorage.setItem(TOKEN_KEY, newToken);
         return newToken;
       }
       return null;
-    } catch (err) {
+    } catch {
       clearAuth();
       return null;
     }
   },
 
-  // ─── ID Verification Methods ────────────────────────────────────────────
+  // ─── ID Verification ────────────────────────────────────────────────────
+
   async checkIDVerificationStatus(): Promise<{
+    success: boolean;
     is_verified: boolean;
-    verification_status: string;
+    verified_at?: string | null;
+    message?: string;
   }> {
     try {
       const token = this.getToken();
       if (!token) throw new Error("Not authenticated");
-      const response = await api.get<{
-        success: boolean;
-        is_verified: boolean;
-        verification_status: string;
-      }>("/v1/auth/id/verify/status", {
+      const { data } = await api.get("/v1/auth/id/verify/status", {
         headers: { Authorization: `Bearer ${token}` },
       });
-      return {
-        is_verified: response.data.is_verified,
-        verification_status: response.data.verification_status,
-      };
+      return data;
     } catch (err: any) {
-      console.error("Failed to check ID verification status:", err);
-      return {
-        is_verified: false,
-        verification_status: "unverified",
-      };
+      throw new Error(extractErrorMessage(err));
     }
   },
 
-  async validateIDNumber(sa_id_number: string): Promise<IDValidationResponse> {
+  async validateIDNumber(idNumber: string): Promise<{
+    success: boolean;
+    message?: string;
+    extracted_info?: {
+      full_name?: string;
+      date_of_birth?: string;
+      gender?: string;
+      citizenship?: string;
+    };
+  }> {
     try {
       const token = this.getToken();
       if (!token) throw new Error("Not authenticated");
-      const response = await api.post<IDValidationResponse>(
+      const { data } = await api.post(
         "/v1/auth/id/validate",
-        { sa_id_number },
+        { sa_id_number: idNumber },
         { headers: { Authorization: `Bearer ${token}` } },
       );
-      return response.data;
+      return data;
     } catch (err: any) {
-      console.error("ID validation error:", err);
       throw new Error(extractErrorMessage(err));
     }
   },
 
-  async verifyID(sa_id_number: string): Promise<IDVerificationResponse> {
+  async verifyID(idNumber: string): Promise<{
+    success: boolean;
+    message?: string;
+  }> {
     try {
       const token = this.getToken();
       if (!token) throw new Error("Not authenticated");
-      const response = await api.post<IDVerificationResponse>(
+      const { data } = await api.post(
         "/v1/auth/id/verify",
-        {
-          sa_id_number,
-          confirm_id_number: sa_id_number,
-        },
+        { sa_id_number: idNumber, confirm_id_number: idNumber },
         { headers: { Authorization: `Bearer ${token}` } },
       );
-      return response.data;
+      return data;
     } catch (err: any) {
-      console.error("ID verification error:", err);
       throw new Error(extractErrorMessage(err));
     }
   },
 
-  // ─── Token Management ──────────────────────────────────────────────────
+  // ─── Local helpers ──────────────────────────────────────────────────────
+
   getToken(): string | null {
     return localStorage.getItem(TOKEN_KEY);
   },
