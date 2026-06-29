@@ -841,6 +841,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     cursor: "pointer",
     width: "100%",
     boxShadow: `0 4px 14px ${colors.primary.DEFAULT}40`,
+    marginBottom: 10,
   },
   completeProfileBtnText: {
     fontSize: 16,
@@ -859,7 +860,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     border: "none",
     cursor: "pointer",
     width: "100%",
-    marginTop: 0,
+    marginBottom: 10,
     boxShadow: `0 4px 14px ${colors.primary.DEFAULT}40`,
   },
   applyBtnText: {
