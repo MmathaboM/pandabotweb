@@ -1137,7 +1137,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#F5F7FA",
     borderTop: "1px solid #E4E7EB",
     flexShrink: 0,
-    marginBottom: 50,
+    marginBottom: 60,
   },
   attachBtn: {
     background: "none",
