@@ -5,7 +5,7 @@ import { MainTab } from "../types";
 interface Props {
   activeTab: MainTab;
   onTabChange: (tab: MainTab) => void;
-  badgeCounts?: Partial<Record<MainTab, number>>; // e.g., { chats: 3 }
+  badgeCounts?: Partial<Record<MainTab, number>>;
 }
 
 const NAV_ITEMS: { key: MainTab; label: string; icon: React.ReactNode }[] = [
@@ -24,7 +24,6 @@ const BottomNav: React.FC<Props> = ({
   onTabChange,
   badgeCounts = {},
 }) => {
-  // Pre-calculate label widths for active animation (optional – CSS handles width)
   const getActiveWidth = (label: string) => {
     if (label === "Opportunities") return 150;
     if (label === "Profile") return 90;
@@ -73,19 +72,19 @@ const BottomNav: React.FC<Props> = ({
           right: 0;
           display: flex;
           justify-content: center;
-          padding: 0 20px 24px 20px;
+          padding: 0 20px 12px 20px;    /* 👈 moved down */
           pointer-events: none;
           z-index: 1000;
         }
         .bottom-nav-container {
           pointer-events: auto;
-          background:rgb(231, 229, 229);
+          background: rgb(231, 229, 229);
           border-radius: 40px;
           display: flex;
           align-items: center;
           justify-content: space-between;
           gap: 12px;
-          padding: 8px 20px;
+          padding: 6px 20px;            /* 👈 more compact */
           box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.2);
           min-width: 320px;
           max-width: 500px;
@@ -173,12 +172,12 @@ const BottomNav: React.FC<Props> = ({
             transform: translateX(0) scale(1);
           }
         }
-        /* Hover effect for non-active items */
         .bottom-nav-item:not(.active):hover {
           background-color: rgba(255,255,255,0.1);
           border-radius: 30px;
         }
-        /* Responsive: increase spacing on larger screens */
+
+        /* Responsive tweaks */
         @media (min-width: 600px) {
           .bottom-nav-container {
             gap: 20px;
@@ -199,7 +198,7 @@ const BottomNav: React.FC<Props> = ({
         @media (max-width: 480px) {
           .bottom-nav-container {
             gap: 8px;
-            padding: 6px 16px;
+            padding: 4px 16px;          /* even more compact on small screens */
             min-width: 280px;
           }
           .bottom-nav-item {
@@ -211,6 +210,13 @@ const BottomNav: React.FC<Props> = ({
           }
           .nav-label {
             font-size: 12px;
+          }
+        }
+
+        /* Safe area for notched phones */
+        @supports (padding-bottom: env(safe-area-inset-bottom)) {
+          .bottom-nav-web {
+            padding-bottom: calc(12px + env(safe-area-inset-bottom));
           }
         }
       `}</style>

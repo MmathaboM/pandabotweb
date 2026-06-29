@@ -72,15 +72,20 @@ body {
 
 .app-content {
   flex: 1;
-  padding-top: var(--top-nav-h);
-  padding-bottom: calc(var(--bottom-nav-h) + 8px);
+  padding-top: var(--top-nav-h);   
+  padding-bottom: 100px;             
   overflow-y: auto;
+}
+
+
+html {
+  overflow-y: scroll;
 }
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 0; }
 
-/* ── Fixed nav  ── */
+/* ── Fixed nav wrappers (prevents shaking) ── */
 .top-nav-wrapper,
 .bottom-nav-wrapper {
   position: fixed;
@@ -100,7 +105,7 @@ body {
   bottom: 0;
 }
 
-/* ── Top Nav ── */
+/* ── Top Nav (if you use one) ── */
 .top-nav {
   width: 100%;
   max-width: 480px;
@@ -207,7 +212,8 @@ body {
   border: 1.5px solid var(--surface);
 }
 
-/* ── Bottom Nav ── */
+/* ── Bottom Nav (used by your BottomNav component) ── */
+/* Your BottomNav already has its own styles; these are kept for compatibility if needed */
 .bottom-nav {
   width: 100%;
   max-width: 480px;
@@ -280,7 +286,7 @@ body {
   margin-top: 1px;
 }
 
-/* Feed / Page scaffold */
+/* ── Feed / Page scaffold ── */
 .page-section {
   padding: 16px;
 }
@@ -312,7 +318,7 @@ body {
   padding: 0;
 }
 
-/* Cards */
+/* ── Cards ── */
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -324,7 +330,7 @@ body {
   margin-top: 10px;
 }
 
-/* Avatar */
+/* ── Avatar ── */
 .avatar {
   border-radius: 50%;
   background: var(--primary-light);
@@ -342,7 +348,7 @@ body {
 .avatar-lg { width: 52px; height: 52px; font-size: 16px; }
 .avatar-xl { width: 72px; height: 72px; font-size: 22px; }
 
-/* Post Card */
+/* ── Post Card ── */
 .post-card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -410,7 +416,7 @@ body {
   color: #EF4444;
 }
 
-/* Opportunity Card */
+/* ── Opportunity Card ── */
 .opp-card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -533,7 +539,7 @@ body {
   font-size: 12px;
 }
 
-/* Chat */
+/* ── Chat ── */
 .chat-item {
   display: flex;
   align-items: center;
@@ -607,7 +613,7 @@ body {
   flex-shrink: 0;
 }
 
-/* Chips / filter row */
+/* ── Chips / filter row ── */
 .filter-row {
   display: flex;
   gap: 8px;
@@ -638,7 +644,7 @@ body {
   border-color: var(--primary);
 }
 
-/* Hero greeting */
+/* ── Hero greeting ── */
 .home-hero {
   background: var(--primary);
   padding: 20px 16px 24px;
@@ -705,7 +711,7 @@ body {
   margin-top: 2px;
 }
 
-/* Academy */
+/* ── Academy ── */
 .academy-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -754,7 +760,7 @@ body {
   line-height: 1.3;
 }
 
-/* Profile */
+/* ── Profile ── */
 .profile-hero {
   background: var(--surface);
   padding: 24px 16px;
@@ -859,7 +865,7 @@ body {
   margin-top: 1px;
 }
 
-/* Schedule */
+/* ── Schedule ── */
 .schedule-item {
   padding: 14px 16px;
   background: var(--surface);
@@ -903,7 +909,7 @@ body {
 .status-pending { background: #FFFBEB; color: #92400E; }
 .status-rejected { background: #FEF2F2; color: #991B1B; }
 
-/* Payslip */
+/* ── Payslip ── */
 .payslip-row {
   display: flex;
   align-items: center;
@@ -929,7 +935,7 @@ body {
   color: var(--primary);
 }
 
-/* Summary info box */
+/* ── Summary info box ── */
 .info-box {
   background: var(--primary-light);
   border: 1px solid rgba(0, 168, 107, 0.2);
@@ -943,7 +949,7 @@ body {
   color: var(--primary-dark);
 }
 
-/* Student Card */
+/* ── Student Card ── */
 .student-card {
   background: linear-gradient(135deg, #00A86B, #007A4D);
   border-radius: var(--radius-xl);
@@ -1031,7 +1037,7 @@ body {
   font-weight: 600;
 }
 
-/* Search bar */
+/* ── Search bar ── */
 .search-bar {
   margin: 12px 16px;
   display: flex;
@@ -1055,7 +1061,7 @@ body {
 
 .search-bar input::placeholder { color: var(--text-muted); }
 
-/* Empty state */
+/* ── Empty state ── */
 .empty-state {
   text-align: center;
   padding: 48px 24px;
@@ -1079,7 +1085,7 @@ body {
   font-size: 13px;
 }
 
-/* Help */
+/* ── Help ── */
 .help-item {
   padding: 14px 16px;
   background: var(--surface);
@@ -1118,7 +1124,7 @@ body {
   line-height: 1.4;
 }
 
-/* Learning Portal */
+/* ── Learning Portal ── */
 .learning-module {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -1174,7 +1180,7 @@ body {
   color: var(--text-muted);
 }
 
-/* Leave balance */
+/* ── Leave balance ── */
 .leave-balance-row {
   display: flex;
   gap: 10px;
@@ -1202,7 +1208,7 @@ body {
   margin-top: 2px;
 }
 
-/* Divider */
+/* ── Divider ── */
 .divider {
   height: 8px;
   background: var(--surface-2);
