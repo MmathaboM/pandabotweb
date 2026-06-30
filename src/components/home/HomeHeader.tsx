@@ -21,7 +21,7 @@ const HomeHeader: React.FC<HomeHeaderProps> = ({
             <div style={styles.subtitle}>Welcome to the community</div>
           </div>
 
-          <button style={styles.bellContainer} onClick={onNotificationsClick}>
+          {/* <button style={styles.bellContainer} onClick={onNotificationsClick}>
             <Bell size={22} color="#fff" />
 
             {unreadCount > 0 && (
@@ -31,7 +31,7 @@ const HomeHeader: React.FC<HomeHeaderProps> = ({
                 </span>
               </div>
             )}
-          </button>
+          </button> */}
         </div>
       </div>
     </div>
