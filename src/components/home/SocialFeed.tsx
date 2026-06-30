@@ -13,10 +13,13 @@ import {
   Trash2,
   ChevronLeft,
   ChevronRight,
+  Edit2,
+  Check,
 } from "lucide-react";
 import { useFeed } from "../../hooks/useFeed";
 import { useAuth } from "../../context/AuthContext";
 import type { FeedComment } from "../../services/FeedService";
+import type { FeedPost } from "../../stores/FeedStore";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -856,29 +859,10 @@ const CommentThread: React.FC<CommentThreadProps> = ({
   return (
     <div
       style={{
-        // borderTop: "1px solid var(--border)",
         marginTop: 0,
         paddingTop: 0,
       }}
     >
-      {/* <button
-        onClick={onToggle}
-        style={{
-          background: "none",
-          border: "none",
-          color: "var(--text-muted)",
-          fontSize: 13,
-          cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          gap: 4,
-          padding: "4px 0",
-        }}
-      >
-        <MessageCircle size={14} />
-        {open ? "Hide" : "Show"} comments ({totalComments || commentCount})
-      </button> */}
-
       {open && (
         <div
           style={{
@@ -1012,6 +996,256 @@ const CommentThread: React.FC<CommentThreadProps> = ({
   );
 };
 
+// ─── Edit Post Modal ──────────────────────────────────────────────────────────
+
+interface EditPostModalProps {
+  post: FeedPost;
+  isOpen: boolean;
+  onClose: () => void;
+  onSave: (content: string, title?: string) => Promise<void>;
+}
+
+const EditPostModal: React.FC<EditPostModalProps> = ({
+  post,
+  isOpen,
+  onClose,
+  onSave,
+}) => {
+  const [content, setContent] = useState(post.content || "");
+  const [title, setTitle] = useState(post.title || "");
+  const [saving, setSaving] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setContent(post.content || "");
+      setTitle(post.title || "");
+      setTimeout(() => textareaRef.current?.focus(), 100);
+    }
+  }, [isOpen, post]);
+
+  if (!isOpen) return null;
+
+  const handleSave = async () => {
+    if (!content.trim()) return;
+    setSaving(true);
+    try {
+      await onSave(content.trim(), title.trim() || undefined);
+      onClose();
+    } catch (error) {
+      console.error("Failed to save post:", error);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      onClose();
+    }
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      handleSave();
+    }
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        backgroundColor: "rgba(0,0,0,0.5)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 10000,
+        padding: 20,
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: "#fff",
+          borderRadius: 12,
+          padding: 24,
+          maxWidth: 600,
+          width: "100%",
+          maxHeight: "90vh",
+          overflowY: "auto",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 16,
+          }}
+        >
+          <h3 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>
+            Edit Post
+          </h3>
+          <button
+            onClick={onClose}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: "var(--text-secondary)",
+            }}
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* <div style={{ marginBottom: 12 }}>
+          <label
+            style={{
+              display: "block",
+              fontSize: 13,
+              fontWeight: 500,
+              marginBottom: 4,
+              color: "var(--text-secondary)",
+            }}
+          >
+            Title (optional)
+          </label>
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Post title..."
+            style={{
+              width: "100%",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              padding: "8px 12px",
+              fontSize: 14,
+              background: "var(--bg)",
+              color: "var(--text-primary)",
+              outline: "none",
+            }}
+          />
+        </div> */}
+
+        <div style={{ marginBottom: 16 }}>
+          <label
+            style={{
+              display: "block",
+              fontSize: 13,
+              fontWeight: 500,
+              marginBottom: 4,
+              color: "var(--text-secondary)",
+            }}
+          >
+            Content
+          </label>
+          <textarea
+            ref={textareaRef}
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="What's on your mind?"
+            rows={5}
+            style={{
+              width: "100%",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              padding: "10px 12px",
+              fontSize: 14,
+              background: "var(--bg)",
+              color: "var(--text-primary)",
+              resize: "none",
+              outline: "none",
+              boxSizing: "border-box",
+            }}
+          />
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--text-muted)",
+              marginTop: 4,
+              textAlign: "right",
+            }}
+          >
+            {content.length}/5000
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            justifyContent: "flex-end",
+            borderTop: "1px solid var(--border)",
+            paddingTop: 16,
+          }}
+        >
+          <button
+            onClick={onClose}
+            style={{
+              padding: "8px 16px",
+              borderRadius: 8,
+              border: "1px solid var(--border)",
+              background: "none",
+              cursor: "pointer",
+              fontSize: 14,
+              color: "var(--text-secondary)",
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={!content.trim() || saving}
+            style={{
+              padding: "8px 20px",
+              borderRadius: 8,
+              border: "none",
+              background: "var(--primary, #fb8500)",
+              color: "#fff",
+              cursor: !content.trim() || saving ? "not-allowed" : "pointer",
+              fontSize: 14,
+              fontWeight: 500,
+              opacity: !content.trim() || saving ? 0.5 : 1,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            {saving ? (
+              <>
+                <RefreshCw
+                  size={16}
+                  style={{ animation: "spin 1s linear infinite" }}
+                />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Check size={16} />
+                Save Changes
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* <div
+          style={{
+            fontSize: 12,
+            color: "var(--text-muted)",
+            marginTop: 8,
+            textAlign: "center",
+          }}
+        >
+          Press <kbd>Ctrl+Enter</kbd> or <kbd>⌘+Enter</kbd> to save
+        </div> */}
+      </div>
+    </div>
+  );
+};
+
 // ─── SocialFeed Main Component ───────────────────────────────────────────────
 
 const SocialFeed: React.FC = () => {
@@ -1027,6 +1261,7 @@ const SocialFeed: React.FC = () => {
     toggleLike,
     togglePin,
     createPost,
+    editPost,
     deletePost,
     hasMore,
   } = useFeed();
@@ -1045,6 +1280,10 @@ const SocialFeed: React.FC = () => {
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxImages, setLightboxImages] = useState<string[]>([]);
   const [lightboxIndex, setLightboxIndex] = useState(0);
+
+  // Edit post state
+  const [editingPost, setEditingPost] = useState<FeedPost | null>(null);
+  const [editModalOpen, setEditModalOpen] = useState(false);
 
   // ── Infinite scroll ────────────────────────────────────────────────────────
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -1156,6 +1395,16 @@ const SocialFeed: React.FC = () => {
   const handleDeletePost = async (postId: number) => {
     if (!window.confirm("Are you sure you want to delete this post?")) return;
     await deletePost(postId);
+  };
+
+  const handleEditPost = (post: FeedPost) => {
+    setEditingPost(post);
+    setEditModalOpen(true);
+  };
+
+  const handleSaveEdit = async (content: string, title?: string) => {
+    if (!editingPost) return;
+    await editPost(editingPost.id, content, title);
   };
 
   const handleRefresh = useCallback(() => {
@@ -1395,6 +1644,7 @@ const SocialFeed: React.FC = () => {
         const isCommentsOpen = openComments.has(post.id);
         const isAuthor = user?.id === post.user?.id;
         const canDelete = isAuthor || isAdmin;
+        const canEdit = isAuthor || isAdmin;
 
         const validMedia =
           post.media?.filter((m) => m.url && m.url.trim() !== "") ?? [];
@@ -1474,6 +1724,18 @@ const SocialFeed: React.FC = () => {
                 <MessageCircle size={15} /> {post.comments_count}
               </button>
 
+              {/* Edit button */}
+              {canEdit && (
+                <button
+                  className="post-action-btn"
+                  onClick={() => handleEditPost(post)}
+                  title="Edit post"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  <Edit2 size={15} />
+                </button>
+              )}
+
               {canDelete && (
                 <button
                   className="post-action-btn"
@@ -1551,6 +1813,19 @@ const SocialFeed: React.FC = () => {
             Be the first to post!
           </p>
         </div>
+      )}
+
+      {/* Edit Post Modal */}
+      {editingPost && (
+        <EditPostModal
+          post={editingPost}
+          isOpen={editModalOpen}
+          onClose={() => {
+            setEditModalOpen(false);
+            setEditingPost(null);
+          }}
+          onSave={handleSaveEdit}
+        />
       )}
 
       {/* Lightbox Modal */}

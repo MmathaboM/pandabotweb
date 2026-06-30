@@ -1,6 +1,10 @@
 import { useCallback } from "react";
 import { useFeedStore } from "../stores/FeedStore";
-import { feedService, type FeedComment, type PaginatedResponse } from "../services/FeedService";
+import {
+  feedService,
+  type FeedComment,
+  type PaginatedResponse,
+} from "../services/FeedService";
 import { getApiError } from "../services/api";
 
 export const useFeed = () => {
@@ -49,14 +53,17 @@ export const useFeed = () => {
     }
   }, [store.isLoading, store.hasMore, store.page, store]);
 
-  const toggleLike = useCallback(async (postId: number) => {
-    store.toggleLike(postId);
-    try {
-      await feedService.toggleLike(postId);
-    } catch {
+  const toggleLike = useCallback(
+    async (postId: number) => {
       store.toggleLike(postId);
-    }
-  }, [store]);
+      try {
+        await feedService.toggleLike(postId);
+      } catch {
+        store.toggleLike(postId);
+      }
+    },
+    [store],
+  );
 
   const togglePin = useCallback(
     async (postId: number, currentlyPinned: boolean) => {
@@ -84,20 +91,42 @@ export const useFeed = () => {
     [store],
   );
 
+  const editPost = useCallback(
+    async (
+      postId: number,
+      content: string,
+      title?: string,
+    ): Promise<boolean> => {
+      try {
+        const updatedPost = await feedService.editPost(postId, content, title);
+        store.updatePost(updatedPost);
+        return true;
+      } catch (err) {
+        store.setError(getApiError(err));
+        return false;
+      }
+    },
+    [store],
+  );
+
   const fetchComments = useCallback(
-    async (postId: number, page = 1, limit = 20): Promise<PaginatedResponse<FeedComment>> => {
+    async (
+      postId: number,
+      page = 1,
+      limit = 20,
+    ): Promise<PaginatedResponse<FeedComment>> => {
       try {
         return await feedService.getComments(postId, page, limit);
       } catch (error) {
         console.error("Failed to fetch comments:", error);
-        return { 
-          data: [], 
-          meta: { 
-            current_page: 1, 
-            last_page: 1, 
-            per_page: limit, 
-            total: 0 
-          } 
+        return {
+          data: [],
+          meta: {
+            current_page: 1,
+            last_page: 1,
+            per_page: limit,
+            total: 0,
+          },
         };
       }
     },
@@ -105,19 +134,23 @@ export const useFeed = () => {
   );
 
   const fetchCommentReplies = useCallback(
-    async (commentId: number, page = 1, limit = 20): Promise<PaginatedResponse<FeedComment>> => {
+    async (
+      commentId: number,
+      page = 1,
+      limit = 20,
+    ): Promise<PaginatedResponse<FeedComment>> => {
       try {
         return await feedService.getCommentReplies(commentId, page, limit);
       } catch (error) {
         console.error("Failed to fetch replies:", error);
-        return { 
-          data: [], 
-          meta: { 
-            current_page: 1, 
-            last_page: 1, 
-            per_page: limit, 
-            total: 0 
-          } 
+        return {
+          data: [],
+          meta: {
+            current_page: 1,
+            last_page: 1,
+            per_page: limit,
+            total: 0,
+          },
         };
       }
     },
@@ -170,6 +203,7 @@ export const useFeed = () => {
     toggleLike,
     togglePin,
     createPost,
+    editPost, 
     fetchComments,
     fetchCommentReplies,
     addComment,

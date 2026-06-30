@@ -124,6 +124,20 @@ export const feedService = {
     return normalizePost(data.post ?? data.data ?? data);
   },
 
+  // ── Edit post content ─────────────────────────────────────────────────────
+
+  async editPost(
+    postId: number,
+    content: string,
+    title?: string,
+  ): Promise<FeedPost> {
+    const { data } = await api.put(`v1/social/posts/${postId}`, {
+      content,
+      title: title || null,
+    });
+    return normalizePost(data.post ?? data.data ?? data);
+  },
+
   // ── Like / Unlike ─────────────────────────────────────────────────────────
 
   async toggleLike(

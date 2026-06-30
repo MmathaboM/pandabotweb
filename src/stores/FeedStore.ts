@@ -1,4 +1,3 @@
-
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
@@ -45,6 +44,7 @@ interface FeedState {
   setPosts: (posts: FeedPost[]) => void;
   appendPosts: (posts: FeedPost[], hasMore: boolean) => void;
   prependPost: (post: FeedPost) => void;
+  updatePost: (post: FeedPost) => void;
   toggleLike: (postId: number) => void;
   togglePin: (postId: number) => void;
   updateCommentCount: (postId: number, delta: number) => void;
@@ -121,6 +121,11 @@ export const useFeedStore = create<FeedState>()(
 
       prependPost: (post) =>
         set((state) => ({ posts: [post, ...state.posts] })),
+
+      updatePost: (post) =>
+        set((state) => ({
+          posts: state.posts.map((p) => (p.id === post.id ? post : p)),
+        })),
 
       toggleLike: (postId) =>
         set((state) => ({
