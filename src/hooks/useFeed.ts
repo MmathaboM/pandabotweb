@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useFeedStore } from "../stores/FeedStore";
-import { feedService, type FeedComment } from "../services/FeedService";
+import { feedService, type FeedComment, type PaginatedResponse } from "../services/FeedService";
 import { getApiError } from "../services/api";
 
 export const useFeed = () => {
@@ -49,31 +49,22 @@ export const useFeed = () => {
     }
   }, [store.isLoading, store.hasMore, store.page, store]);
 
-  /** Optimistic like — field is liked_by_me */
-  const toggleLike = useCallback(
-    async (postId: number) => {
+  const toggleLike = useCallback(async (postId: number) => {
+    store.toggleLike(postId);
+    try {
+      await feedService.toggleLike(postId);
+    } catch {
       store.toggleLike(postId);
-      try {
-        await feedService.toggleLike(postId);
-      } catch {
-        store.toggleLike(postId); // revert
-      }
-    },
-    [store],
-  );
+    }
+  }, [store]);
 
-  /**
-   * Optimistic pin — calls PUT /social/posts/{id} with { is_pinned }
-   * Only mmathabo@skillspanda.co.za and heita@skillspanda.co.za can see
-   * the button; the backend also enforces this via canModerate() check.
-   */
   const togglePin = useCallback(
     async (postId: number, currentlyPinned: boolean) => {
       store.togglePin(postId);
       try {
         await feedService.updatePost(postId, { is_pinned: !currentlyPinned });
       } catch {
-        store.togglePin(postId); // revert
+        store.togglePin(postId);
       }
     },
     [store],
@@ -94,11 +85,40 @@ export const useFeed = () => {
   );
 
   const fetchComments = useCallback(
-    async (postId: number): Promise<FeedComment[]> => {
+    async (postId: number, page = 1, limit = 20): Promise<PaginatedResponse<FeedComment>> => {
       try {
-        return await feedService.getComments(postId);
-      } catch {
-        return [];
+        return await feedService.getComments(postId, page, limit);
+      } catch (error) {
+        console.error("Failed to fetch comments:", error);
+        return { 
+          data: [], 
+          meta: { 
+            current_page: 1, 
+            last_page: 1, 
+            per_page: limit, 
+            total: 0 
+          } 
+        };
+      }
+    },
+    [],
+  );
+
+  const fetchCommentReplies = useCallback(
+    async (commentId: number, page = 1, limit = 20): Promise<PaginatedResponse<FeedComment>> => {
+      try {
+        return await feedService.getCommentReplies(commentId, page, limit);
+      } catch (error) {
+        console.error("Failed to fetch replies:", error);
+        return { 
+          data: [], 
+          meta: { 
+            current_page: 1, 
+            last_page: 1, 
+            per_page: limit, 
+            total: 0 
+          } 
+        };
       }
     },
     [],
@@ -118,7 +138,8 @@ export const useFeed = () => {
         );
         store.updateCommentCount(postId, 1);
         return comment;
-      } catch {
+      } catch (error) {
+        console.error("Failed to add comment:", error);
         return null;
       }
     },
@@ -150,7 +171,8 @@ export const useFeed = () => {
     togglePin,
     createPost,
     fetchComments,
-    addComment, 
+    fetchCommentReplies,
+    addComment,
     deletePost,
   };
 };

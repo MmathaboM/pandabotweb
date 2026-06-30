@@ -23,6 +23,17 @@ export interface FeedComment {
     email?: string;
   };
   replies?: FeedComment[];
+  replies_count?: number;
+}
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  meta: {
+    current_page: number;
+    last_page: number;
+    per_page: number;
+    total: number;
+  };
 }
 
 export interface FeedResponse {
@@ -49,6 +60,7 @@ function normalizeComment(raw: any): FeedComment {
     replies: Array.isArray(raw.replies)
       ? raw.replies.map(normalizeComment)
       : [],
+    replies_count: raw.replies_count ?? 0,
   };
 }
 
@@ -123,9 +135,23 @@ export const feedService = {
 
   // ── Comments ──────────────────────────────────────────────────────────────
 
-  async getComments(postId: number): Promise<FeedComment[]> {
-    const { data } = await api.get(`v1/social/posts/${postId}/comments`);
-    return (data.comments ?? data.data ?? []).map(normalizeComment);
+  async getComments(
+    postId: number,
+    page = 1,
+    limit = 20,
+  ): Promise<PaginatedResponse<FeedComment>> {
+    const { data } = await api.get(`v1/social/posts/${postId}/comments`, {
+      params: { page, limit },
+    });
+    return {
+      data: (data.data ?? data.comments ?? []).map(normalizeComment),
+      meta: data.meta || {
+        current_page: page,
+        last_page: 1,
+        per_page: limit,
+        total: 0,
+      },
+    };
   },
 
   async createComment(
@@ -158,14 +184,18 @@ export const feedService = {
 
   // ── Comment Replies ──────────────────────────────────────────────────────
 
-  async getCommentReplies(commentId: number): Promise<FeedComment[]> {
-    // Since your backend loads replies with the comment, we just need to fetch the comment with replies
-    // But if you want to fetch only replies, you'd need to add an endpoint
-    // For now, we'll fetch all comments for the post and find the one we want
-    const { data } = await api.get(`v1/social/posts/${commentId}/comments`);
-    // This might not work perfectly - better to use the existing comments data
-    // Since your controller loads replies with the comment, we can just use that
-    return [];
+  async getCommentReplies(
+    commentId: number,
+    page = 1,
+    limit = 20,
+  ): Promise<PaginatedResponse<FeedComment>> {
+    const { data } = await api.get(`v1/social/comments/${commentId}/replies`, {
+      params: { page, limit },
+    });
+    return {
+      data: (data.data ?? []).map(normalizeComment),
+      meta: data.meta,
+    };
   },
 
   // ── Post CRUD ─────────────────────────────────────────────────────────────

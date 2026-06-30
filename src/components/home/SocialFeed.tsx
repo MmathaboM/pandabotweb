@@ -463,28 +463,53 @@ const styles = {
   moreText: { color: "#fff", fontSize: 24, fontWeight: 700 },
 };
 
-// ─── Comment With Replies Component ───────────────────────────────────────────
+// ─── Comment Styles ──────────────────────────────────────────────────────────
+
+const avatarStyle: React.CSSProperties = {
+  width: 28,
+  height: 28,
+  borderRadius: "50%",
+  background: "var(--primary, #fb8500)",
+  color: "#fff",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  fontSize: 10,
+  fontWeight: 700,
+  flexShrink: 0,
+};
+
+const bubbleStyle: React.CSSProperties = {
+  background: "var(--bg-secondary, #f0f0f0)",
+  borderRadius: 10,
+  padding: "6px 10px",
+  flex: 1,
+};
+
+// ─── Single Comment Component with Nested Replies ─────────────────────────────
 
 interface CommentWithRepliesProps {
   comment: FeedComment;
   postId: number;
-  onReplyAdded: (commentId: number, reply: FeedComment) => void;
-  onReplyCountUpdate: (commentId: number, increment: number) => void;
+  depth?: number;
+  onReplyAdded: (parentId: number, reply: FeedComment) => void;
 }
 
 const CommentWithReplies: React.FC<CommentWithRepliesProps> = ({
   comment,
   postId,
+  depth = 0,
   onReplyAdded,
-  onReplyCountUpdate,
 }) => {
   const { user } = useAuth();
-  const { addComment } = useFeed(); 
+  const { addComment } = useFeed();
   const [showReplies, setShowReplies] = useState(false);
-  const [replies, setReplies] = useState<FeedComment[]>(comment.replies || []);
   const [showReplyInput, setShowReplyInput] = useState(false);
   const [replyDraft, setReplyDraft] = useState("");
   const [submittingReply, setSubmittingReply] = useState(false);
+  const [localReplies, setLocalReplies] = useState<FeedComment[]>(
+    comment.replies || [],
+  );
 
   const first = user?.first_name ?? "";
   const last = user?.last_name ?? "";
@@ -497,11 +522,10 @@ const CommentWithReplies: React.FC<CommentWithRepliesProps> = ({
     try {
       const reply = await addComment(postId, replyDraft.trim(), comment.id);
       if (reply) {
-        setReplies((prev) => [...prev, reply]);
+        setLocalReplies((prev) => [...prev, reply]);
         setReplyDraft("");
         setShowReplyInput(false);
         onReplyAdded(comment.id, reply);
-        onReplyCountUpdate(comment.id, 1);
       }
     } catch (error) {
       console.error("Failed to add reply:", error);
@@ -510,10 +534,13 @@ const CommentWithReplies: React.FC<CommentWithRepliesProps> = ({
     }
   };
 
-  const replyCount = replies.length;
+  const replyCount = localReplies.length;
+
+  // Calculate indentation based on depth (max 48px)
+  const indentLevel = Math.min(depth * 16, 48);
 
   return (
-    <div style={{ marginBottom: 8 }}>
+    <div style={{ marginBottom: 8, marginLeft: depth > 0 ? indentLevel : 0 }}>
       {/* Main Comment */}
       <div
         style={{
@@ -522,19 +549,44 @@ const CommentWithReplies: React.FC<CommentWithRepliesProps> = ({
           alignItems: "flex-start",
         }}
       >
-        <div style={avatarStyle}>{comment.user?.initials ?? "?"}</div>
+        <div
+          style={{
+            ...avatarStyle,
+            width: depth > 0 ? 24 : 28,
+            height: depth > 0 ? 24 : 28,
+            fontSize: depth > 0 ? 8 : 10,
+          }}
+        >
+          {comment.user?.initials ?? "?"}
+        </div>
         <div style={{ flex: 1 }}>
-          <div style={bubbleStyle}>
-            <span style={{ fontSize: 12, fontWeight: 700, marginRight: 6 }}>
+          <div
+            style={{
+              ...bubbleStyle,
+              padding: depth > 0 ? "4px 8px" : "6px 10px",
+            }}
+          >
+            <span
+              style={{
+                fontSize: depth > 0 ? 11 : 12,
+                fontWeight: 700,
+                marginRight: 6,
+              }}
+            >
               {comment.user?.name ?? "Unknown"}
             </span>
-            <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            <span
+              style={{
+                fontSize: depth > 0 ? 10 : 11,
+                color: "var(--text-muted)",
+              }}
+            >
               {timeAgo(comment.created_at)}
             </span>
             <p
               style={{
                 margin: "2px 0 0",
-                fontSize: 13,
+                fontSize: depth > 0 ? 12 : 13,
                 wordWrap: "break-word",
               }}
             >
@@ -549,7 +601,7 @@ const CommentWithReplies: React.FC<CommentWithRepliesProps> = ({
               background: "none",
               border: "none",
               color: "var(--text-muted)",
-              fontSize: 11,
+              fontSize: depth > 0 ? 10 : 11,
               cursor: "pointer",
               padding: "2px 0",
               marginTop: 2,
@@ -582,7 +634,7 @@ const CommentWithReplies: React.FC<CommentWithRepliesProps> = ({
                     handleReplySubmit();
                   }
                 }}
-                placeholder="Write a reply…"
+                placeholder={`Reply to ${comment.user?.name ?? "Unknown"}...`}
                 style={{
                   flex: 1,
                   border: "1px solid var(--border)",
@@ -620,16 +672,16 @@ const CommentWithReplies: React.FC<CommentWithRepliesProps> = ({
         </div>
       </div>
 
-      {/* Replies Toggle Button */}
+      {/* Replies Toggle */}
       {replyCount > 0 && (
-        <div style={{ marginLeft: 36, marginTop: 2 }}>
+        <div style={{ marginLeft: depth > 0 ? 0 : 36, marginTop: 2 }}>
           <button
             onClick={() => setShowReplies((prev) => !prev)}
             style={{
               background: "none",
               border: "none",
               color: "var(--text-muted)",
-              fontSize: 11,
+              fontSize: depth > 0 ? 10 : 11,
               cursor: "pointer",
               padding: "2px 0",
             }}
@@ -639,68 +691,22 @@ const CommentWithReplies: React.FC<CommentWithRepliesProps> = ({
         </div>
       )}
 
-      {/* Replies List */}
+      {/* Nested Replies List - Recursive */}
       {showReplies && replyCount > 0 && (
-        <div style={{ marginLeft: 36, marginTop: 4 }}>
-          {replies.map((reply) => (
-            <div
+        <div style={{ marginLeft: depth > 0 ? 0 : 20, marginTop: 4 }}>
+          {localReplies.map((reply) => (
+            <CommentWithReplies
               key={reply.id}
-              style={{
-                display: "flex",
-                gap: 8,
-                marginBottom: 4,
-                alignItems: "flex-start",
-              }}
-            >
-              <div
-                style={{ ...avatarStyle, width: 24, height: 24, fontSize: 8 }}
-              >
-                {reply.user?.initials ?? "?"}
-              </div>
-              <div style={{ ...bubbleStyle, padding: "4px 8px", flex: 1 }}>
-                <span style={{ fontSize: 11, fontWeight: 700, marginRight: 6 }}>
-                  {reply.user?.name ?? "Unknown"}
-                </span>
-                <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
-                  {timeAgo(reply.created_at)}
-                </span>
-                <p
-                  style={{
-                    margin: "2px 0 0",
-                    fontSize: 12,
-                    wordWrap: "break-word",
-                  }}
-                >
-                  {reply.content}
-                </p>
-              </div>
-            </div>
+              comment={reply}
+              postId={postId}
+              depth={depth + 1}
+              onReplyAdded={onReplyAdded}
+            />
           ))}
         </div>
       )}
     </div>
   );
-};
-
-const avatarStyle: React.CSSProperties = {
-  width: 28,
-  height: 28,
-  borderRadius: "50%",
-  background: "var(--primary, #fb8500)",
-  color: "#fff",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  fontSize: 10,
-  fontWeight: 700,
-  flexShrink: 0,
-};
-
-const bubbleStyle: React.CSSProperties = {
-  background: "var(--bg-secondary, #f0f0f0)",
-  borderRadius: 10,
-  padding: "6px 10px",
-  flex: 1,
 };
 
 // ─── Comment Thread ────────────────────────────────────────────────────────────
@@ -719,29 +725,79 @@ const CommentThread: React.FC<CommentThreadProps> = ({
   onToggle,
 }) => {
   const { user } = useAuth();
-  const { fetchComments, addComment } = useFeed(); // Changed from createComment to addComment
+  const { fetchComments, addComment } = useFeed();
   const [comments, setComments] = useState<FeedComment[]>([]);
   const [loading, setLoading] = useState(false);
   const [draft, setDraft] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await fetchComments(postId);
-      setComments(result);
-    } catch (error) {
-      console.error("Failed to load comments:", error);
-    } finally {
-      setLoading(false);
-    }
-  }, [postId, fetchComments]);
+  // Pagination state for comments
+  const [currentPage, setCurrentPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [totalComments, setTotalComments] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
 
+  // Load comments with pagination
+  const loadComments = useCallback(
+    async (page = 1, append = false) => {
+      if (loading || loadingMore) return;
+
+      if (page === 1) {
+        setLoading(true);
+      } else {
+        setLoadingMore(true);
+      }
+
+      try {
+        const result = await fetchComments(postId, page, 10);
+
+        let commentsData: FeedComment[] = [];
+        let metaData = {
+          current_page: 1,
+          last_page: 1,
+          per_page: 10,
+          total: 0,
+        };
+
+        if (result && typeof result === "object") {
+          if ("data" in result && Array.isArray(result.data)) {
+            commentsData = result.data;
+            if ("meta" in result && result.meta) {
+              metaData = result.meta;
+            }
+          } else if (Array.isArray(result)) {
+            commentsData = result;
+          }
+        }
+
+        if (append) {
+          setComments((prev) => [...prev, ...commentsData]);
+        } else {
+          setComments(commentsData);
+        }
+
+        setCurrentPage(metaData.current_page);
+        setHasMore(metaData.current_page < metaData.last_page);
+        setTotalComments(metaData.total);
+      } catch (error) {
+        console.error("Failed to load comments:", error);
+        setComments([]);
+        setHasMore(false);
+        setTotalComments(0);
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    },
+    [postId, fetchComments, loading, loadingMore],
+  );
+
+  // Load first page when comments are opened
   useEffect(() => {
     if (open && comments.length === 0 && !loading) {
-      load();
+      loadComments(1, false);
     }
-  }, [open, load, comments.length, loading]);
+  }, [open, loadComments, comments.length, loading]);
 
   const handleSubmit = async () => {
     if (!draft.trim()) return;
@@ -749,7 +805,8 @@ const CommentThread: React.FC<CommentThreadProps> = ({
     try {
       const comment = await addComment(postId, draft.trim());
       if (comment) {
-        setComments((prev) => [...prev, comment]);
+        setComments((prev) => [comment, ...prev]);
+        setTotalComments((prev) => prev + 1);
         setDraft("");
       }
     } catch (error) {
@@ -761,28 +818,35 @@ const CommentThread: React.FC<CommentThreadProps> = ({
 
   const handleReplyAdded = useCallback(
     (parentId: number, reply: FeedComment) => {
-      setComments((prev) =>
-        prev.map((c) => {
+      // Recursively find and update the comment with the new reply
+      const updateReplies = (items: FeedComment[]): FeedComment[] => {
+        return items.map((c) => {
           if (c.id === parentId) {
             return {
               ...c,
               replies: [...(c.replies || []), reply],
             };
           }
+          if (c.replies && c.replies.length > 0) {
+            return {
+              ...c,
+              replies: updateReplies(c.replies),
+            };
+          }
           return c;
-        }),
-      );
+        });
+      };
+
+      setComments((prev) => updateReplies(prev));
     },
     [],
   );
 
-  const handleReplyCountUpdate = useCallback(
-    (commentId: number, increment: number) => {
-      // This is just for visual updates - the actual count is managed by the backend
-      // We could update a local count if needed
-    },
-    [],
-  );
+  const loadMoreComments = () => {
+    if (!loadingMore && hasMore) {
+      loadComments(currentPage + 1, true);
+    }
+  };
 
   const first = user?.first_name ?? "";
   const last = user?.last_name ?? "";
@@ -792,9 +856,9 @@ const CommentThread: React.FC<CommentThreadProps> = ({
   return (
     <div
       style={{
-        borderTop: "1px solid var(--border)",
-        marginTop: 8,
-        paddingTop: 8,
+        // borderTop: "1px solid var(--border)",
+        marginTop: 0,
+        paddingTop: 0,
       }}
     >
       {/* <button
@@ -812,11 +876,20 @@ const CommentThread: React.FC<CommentThreadProps> = ({
         }}
       >
         <MessageCircle size={14} />
-        {open ? "Hide" : "Show"} comments ({commentCount})
+        {open ? "Hide" : "Show"} comments ({totalComments || commentCount})
       </button> */}
 
       {open && (
-        <div style={{ marginTop: 8 }}>
+        <div
+          style={{
+            marginTop: 8,
+            maxHeight: 400,
+            overflowY: "auto",
+            paddingRight: 4,
+          }}
+          className="comments-scroll-container"
+        >
+          {/* Loading state */}
           {loading && (
             <p
               style={{
@@ -825,10 +898,11 @@ const CommentThread: React.FC<CommentThreadProps> = ({
                 margin: "4px 0",
               }}
             >
-              Loading…
+              Loading comments…
             </p>
           )}
 
+          {/* Empty state */}
           {!loading && comments.length === 0 && (
             <p
               style={{
@@ -841,23 +915,52 @@ const CommentThread: React.FC<CommentThreadProps> = ({
             </p>
           )}
 
+          {/* Comments list */}
           {comments.map((c) => (
             <CommentWithReplies
               key={c.id}
               comment={c}
               postId={postId}
+              depth={0}
               onReplyAdded={handleReplyAdded}
-              onReplyCountUpdate={handleReplyCountUpdate}
             />
           ))}
 
-          {/* New Comment Input */}
+          {/* Load more comments button */}
+          {hasMore && !loading && (
+            <button
+              onClick={loadMoreComments}
+              disabled={loadingMore}
+              style={{
+                background: "none",
+                border: "none",
+                color: "var(--primary, #fb8500)",
+                fontSize: 12,
+                cursor: loadingMore ? "default" : "pointer",
+                padding: "8px 0",
+                opacity: loadingMore ? 0.5 : 1,
+                display: "block",
+                width: "100%",
+                textAlign: "center",
+              }}
+            >
+              {loadingMore ? "Loading more comments..." : "Load more comments"}
+            </button>
+          )}
+
+          {/* Comment input - always at the bottom */}
           <div
             style={{
               display: "flex",
               gap: 8,
               alignItems: "center",
               marginTop: 8,
+              paddingTop: 8,
+              borderTop: "1px solid var(--border)",
+              position: "sticky",
+              bottom: 0,
+              background: "var(--bg)",
+              paddingBottom: 4,
             }}
           >
             <div style={avatarStyle}>{authorInitials}</div>
@@ -946,12 +1049,10 @@ const SocialFeed: React.FC = () => {
   // ── Infinite scroll ────────────────────────────────────────────────────────
   const sentinelRef = useRef<HTMLDivElement>(null);
 
-  // Load first page on mount
   useEffect(() => {
     load();
   }, [load]);
 
-  // IntersectionObserver to trigger loadMore
   useEffect(() => {
     if (!sentinelRef.current) return;
     const observer = new IntersectionObserver(
