@@ -17,7 +17,6 @@ import {
 import { useFeed } from "../../hooks/useFeed";
 import { useAuth } from "../../context/AuthContext";
 import type { FeedComment } from "../../services/FeedService";
-import type { FeedMedia } from "../../stores/FeedStore";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -42,12 +41,6 @@ function timeAgo(iso: string): string {
 
 const STORAGE_BASE_URL =
   (import.meta as any).env.VITE_STORAGE_BASE_URL || window.location.origin;
-
-if (!(import.meta as any).env.VITE_STORAGE_BASE_URL) {
-  console.warn(
-    "[getImageUrl] VITE_STORAGE_BASE_URL is not set — falling back to window.location.origin, which is likely wrong for media stored on the Laravel backend.",
-  );
-}
 
 function getImageUrl(url: string): string {
   if (!url) return "";
@@ -229,7 +222,7 @@ const LightboxModal: React.FC<LightboxModalProps> = ({
   );
 };
 
-// ─── Media Gallery (web) ──────────────────────────────────────────────────────
+// ─── Media Gallery ────────────────────────────────────────────────────────────
 
 interface GalleryImage {
   src: string;
@@ -470,7 +463,247 @@ const styles = {
   moreText: { color: "#fff", fontSize: 24, fontWeight: 700 },
 };
 
-// ─── CommentThread ──────────────────────────────────────────────────────────────
+// ─── Comment With Replies Component ───────────────────────────────────────────
+
+interface CommentWithRepliesProps {
+  comment: FeedComment;
+  postId: number;
+  onReplyAdded: (commentId: number, reply: FeedComment) => void;
+  onReplyCountUpdate: (commentId: number, increment: number) => void;
+}
+
+const CommentWithReplies: React.FC<CommentWithRepliesProps> = ({
+  comment,
+  postId,
+  onReplyAdded,
+  onReplyCountUpdate,
+}) => {
+  const { user } = useAuth();
+  const { addComment } = useFeed(); 
+  const [showReplies, setShowReplies] = useState(false);
+  const [replies, setReplies] = useState<FeedComment[]>(comment.replies || []);
+  const [showReplyInput, setShowReplyInput] = useState(false);
+  const [replyDraft, setReplyDraft] = useState("");
+  const [submittingReply, setSubmittingReply] = useState(false);
+
+  const first = user?.first_name ?? "";
+  const last = user?.last_name ?? "";
+  const authorInitials =
+    ((first[0] ?? "") + (last[0] ?? "")).toUpperCase() || "?";
+
+  const handleReplySubmit = async () => {
+    if (!replyDraft.trim()) return;
+    setSubmittingReply(true);
+    try {
+      const reply = await addComment(postId, replyDraft.trim(), comment.id);
+      if (reply) {
+        setReplies((prev) => [...prev, reply]);
+        setReplyDraft("");
+        setShowReplyInput(false);
+        onReplyAdded(comment.id, reply);
+        onReplyCountUpdate(comment.id, 1);
+      }
+    } catch (error) {
+      console.error("Failed to add reply:", error);
+    } finally {
+      setSubmittingReply(false);
+    }
+  };
+
+  const replyCount = replies.length;
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      {/* Main Comment */}
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          alignItems: "flex-start",
+        }}
+      >
+        <div style={avatarStyle}>{comment.user?.initials ?? "?"}</div>
+        <div style={{ flex: 1 }}>
+          <div style={bubbleStyle}>
+            <span style={{ fontSize: 12, fontWeight: 700, marginRight: 6 }}>
+              {comment.user?.name ?? "Unknown"}
+            </span>
+            <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+              {timeAgo(comment.created_at)}
+            </span>
+            <p
+              style={{
+                margin: "2px 0 0",
+                fontSize: 13,
+                wordWrap: "break-word",
+              }}
+            >
+              {comment.content}
+            </p>
+          </div>
+
+          {/* Reply Button */}
+          <button
+            onClick={() => setShowReplyInput((prev) => !prev)}
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--text-muted)",
+              fontSize: 11,
+              cursor: "pointer",
+              padding: "2px 0",
+              marginTop: 2,
+            }}
+          >
+            Reply
+          </button>
+
+          {/* Reply Input */}
+          {showReplyInput && (
+            <div
+              style={{
+                display: "flex",
+                gap: 6,
+                marginTop: 4,
+                alignItems: "center",
+              }}
+            >
+              <div
+                style={{ ...avatarStyle, width: 24, height: 24, fontSize: 8 }}
+              >
+                {authorInitials}
+              </div>
+              <input
+                value={replyDraft}
+                onChange={(e) => setReplyDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleReplySubmit();
+                  }
+                }}
+                placeholder="Write a reply…"
+                style={{
+                  flex: 1,
+                  border: "1px solid var(--border)",
+                  borderRadius: 16,
+                  padding: "4px 10px",
+                  fontSize: 12,
+                  background: "var(--bg)",
+                  color: "var(--text-primary)",
+                  outline: "none",
+                }}
+                autoFocus
+              />
+              <button
+                onClick={handleReplySubmit}
+                disabled={!replyDraft.trim() || submittingReply}
+                style={{
+                  background: "var(--primary, #fb8500)",
+                  border: "none",
+                  borderRadius: "50%",
+                  width: 26,
+                  height: 26,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  opacity: !replyDraft.trim() || submittingReply ? 0.5 : 1,
+                  color: "#fff",
+                  flexShrink: 0,
+                }}
+              >
+                <Send size={12} />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Replies Toggle Button */}
+      {replyCount > 0 && (
+        <div style={{ marginLeft: 36, marginTop: 2 }}>
+          <button
+            onClick={() => setShowReplies((prev) => !prev)}
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--text-muted)",
+              fontSize: 11,
+              cursor: "pointer",
+              padding: "2px 0",
+            }}
+          >
+            {showReplies ? "Hide" : "Show"} replies ({replyCount})
+          </button>
+        </div>
+      )}
+
+      {/* Replies List */}
+      {showReplies && replyCount > 0 && (
+        <div style={{ marginLeft: 36, marginTop: 4 }}>
+          {replies.map((reply) => (
+            <div
+              key={reply.id}
+              style={{
+                display: "flex",
+                gap: 8,
+                marginBottom: 4,
+                alignItems: "flex-start",
+              }}
+            >
+              <div
+                style={{ ...avatarStyle, width: 24, height: 24, fontSize: 8 }}
+              >
+                {reply.user?.initials ?? "?"}
+              </div>
+              <div style={{ ...bubbleStyle, padding: "4px 8px", flex: 1 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, marginRight: 6 }}>
+                  {reply.user?.name ?? "Unknown"}
+                </span>
+                <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                  {timeAgo(reply.created_at)}
+                </span>
+                <p
+                  style={{
+                    margin: "2px 0 0",
+                    fontSize: 12,
+                    wordWrap: "break-word",
+                  }}
+                >
+                  {reply.content}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const avatarStyle: React.CSSProperties = {
+  width: 28,
+  height: 28,
+  borderRadius: "50%",
+  background: "var(--primary, #fb8500)",
+  color: "#fff",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  fontSize: 10,
+  fontWeight: 700,
+  flexShrink: 0,
+};
+
+const bubbleStyle: React.CSSProperties = {
+  background: "var(--bg-secondary, #f0f0f0)",
+  borderRadius: 10,
+  padding: "6px 10px",
+  flex: 1,
+};
+
+// ─── Comment Thread ────────────────────────────────────────────────────────────
 
 interface CommentThreadProps {
   postId: number;
@@ -486,7 +719,7 @@ const CommentThread: React.FC<CommentThreadProps> = ({
   onToggle,
 }) => {
   const { user } = useAuth();
-  const { fetchComments, addComment } = useFeed();
+  const { fetchComments, addComment } = useFeed(); // Changed from createComment to addComment
   const [comments, setComments] = useState<FeedComment[]>([]);
   const [loading, setLoading] = useState(false);
   const [draft, setDraft] = useState("");
@@ -494,9 +727,14 @@ const CommentThread: React.FC<CommentThreadProps> = ({
 
   const load = useCallback(async () => {
     setLoading(true);
-    const result = await fetchComments(postId);
-    setComments(result);
-    setLoading(false);
+    try {
+      const result = await fetchComments(postId);
+      setComments(result);
+    } catch (error) {
+      console.error("Failed to load comments:", error);
+    } finally {
+      setLoading(false);
+    }
   }, [postId, fetchComments]);
 
   useEffect(() => {
@@ -508,13 +746,43 @@ const CommentThread: React.FC<CommentThreadProps> = ({
   const handleSubmit = async () => {
     if (!draft.trim()) return;
     setSubmitting(true);
-    const comment = await addComment(postId, draft.trim());
-    if (comment) {
-      setComments((prev) => [...prev, comment]);
-      setDraft("");
+    try {
+      const comment = await addComment(postId, draft.trim());
+      if (comment) {
+        setComments((prev) => [...prev, comment]);
+        setDraft("");
+      }
+    } catch (error) {
+      console.error("Failed to add comment:", error);
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitting(false);
   };
+
+  const handleReplyAdded = useCallback(
+    (parentId: number, reply: FeedComment) => {
+      setComments((prev) =>
+        prev.map((c) => {
+          if (c.id === parentId) {
+            return {
+              ...c,
+              replies: [...(c.replies || []), reply],
+            };
+          }
+          return c;
+        }),
+      );
+    },
+    [],
+  );
+
+  const handleReplyCountUpdate = useCallback(
+    (commentId: number, increment: number) => {
+      // This is just for visual updates - the actual count is managed by the backend
+      // We could update a local count if needed
+    },
+    [],
+  );
 
   const first = user?.first_name ?? "";
   const last = user?.last_name ?? "";
@@ -529,6 +797,24 @@ const CommentThread: React.FC<CommentThreadProps> = ({
         paddingTop: 8,
       }}
     >
+      {/* <button
+        onClick={onToggle}
+        style={{
+          background: "none",
+          border: "none",
+          color: "var(--text-muted)",
+          fontSize: 13,
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          padding: "4px 0",
+        }}
+      >
+        <MessageCircle size={14} />
+        {open ? "Hide" : "Show"} comments ({commentCount})
+      </button> */}
+
       {open && (
         <div style={{ marginTop: 8 }}>
           {loading && (
@@ -556,34 +842,22 @@ const CommentThread: React.FC<CommentThreadProps> = ({
           )}
 
           {comments.map((c) => (
-            <div
+            <CommentWithReplies
               key={c.id}
-              style={{
-                display: "flex",
-                gap: 8,
-                marginBottom: 8,
-                alignItems: "flex-start",
-              }}
-            >
-              <div style={avatarStyle}>{c.user?.initials ?? "?"}</div>
-              <div style={bubbleStyle}>
-                <span style={{ fontSize: 12, fontWeight: 700, marginRight: 6 }}>
-                  {c.user?.name ?? "Unknown"}
-                </span>
-                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                  {c.time_ago ?? timeAgo(c.created_at)}
-                </span>
-                <p style={{ margin: "2px 0 0", fontSize: 13 }}>{c.content}</p>
-              </div>
-            </div>
+              comment={c}
+              postId={postId}
+              onReplyAdded={handleReplyAdded}
+              onReplyCountUpdate={handleReplyCountUpdate}
+            />
           ))}
 
+          {/* New Comment Input */}
           <div
             style={{
               display: "flex",
               gap: 8,
               alignItems: "center",
-              marginTop: 4,
+              marginTop: 8,
             }}
           >
             <div style={avatarStyle}>{authorInitials}</div>
@@ -597,7 +871,16 @@ const CommentThread: React.FC<CommentThreadProps> = ({
                 }
               }}
               placeholder="Write a comment…"
-              style={commentInputStyle}
+              style={{
+                flex: 1,
+                border: "1px solid var(--border)",
+                borderRadius: 20,
+                padding: "6px 12px",
+                fontSize: 13,
+                background: "var(--bg)",
+                color: "var(--text-primary)",
+                outline: "none",
+              }}
             />
             <button
               onClick={handleSubmit}
@@ -626,39 +909,7 @@ const CommentThread: React.FC<CommentThreadProps> = ({
   );
 };
 
-const avatarStyle: React.CSSProperties = {
-  width: 28,
-  height: 28,
-  borderRadius: "50%",
-  background: "var(--primary, #fb8500)",
-  color: "#fff",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  fontSize: 10,
-  fontWeight: 700,
-  flexShrink: 0,
-};
-
-const bubbleStyle: React.CSSProperties = {
-  background: "var(--bg-secondary, #f0f0f0)",
-  borderRadius: 10,
-  padding: "6px 10px",
-  flex: 1,
-};
-
-const commentInputStyle: React.CSSProperties = {
-  flex: 1,
-  border: "1px solid var(--border)",
-  borderRadius: 20,
-  padding: "6px 12px",
-  fontSize: 13,
-  background: "var(--bg)",
-  color: "var(--text-primary)",
-  outline: "none",
-};
-
-// ─── SocialFeed ───────────────────────────────────────────────────────────────
+// ─── SocialFeed Main Component ───────────────────────────────────────────────
 
 const SocialFeed: React.FC = () => {
   const { user } = useAuth();
@@ -698,7 +949,7 @@ const SocialFeed: React.FC = () => {
   // Load first page on mount
   useEffect(() => {
     load();
-  }, [load]); // load() in hook already fetches page 1
+  }, [load]);
 
   // IntersectionObserver to trigger loadMore
   useEffect(() => {
@@ -714,7 +965,7 @@ const SocialFeed: React.FC = () => {
           loadMore();
         }
       },
-      { rootMargin: "0px 0px 100px 0px" }, // start loading slightly before reaching the bottom
+      { rootMargin: "0px 0px 100px 0px" },
     );
     observer.observe(sentinelRef.current);
     return () => observer.disconnect();
@@ -807,7 +1058,7 @@ const SocialFeed: React.FC = () => {
   };
 
   const handleRefresh = useCallback(() => {
-    refresh(); // resets to page 1 internally
+    refresh();
   }, [refresh]);
 
   const sortedPosts = [...posts].sort((a, b) => {
@@ -910,7 +1161,6 @@ const SocialFeed: React.FC = () => {
             }}
           />
 
-          {/* Preview gallery with remove buttons */}
           {mediaPreviews.length > 0 && (
             <PostMediaGallery
               items={mediaPreviews}
@@ -1001,7 +1251,7 @@ const SocialFeed: React.FC = () => {
         </div>
       )}
 
-      {/* Skeletons – only on initial load (posts empty) */}
+      {/* Skeletons */}
       {isLoading && posts.length === 0 && (
         <>
           {[1, 2, 3].map((i) => (
@@ -1084,8 +1334,7 @@ const SocialFeed: React.FC = () => {
               <div className="post-meta">
                 <h4>{post.user?.name ?? "Unknown user"}</h4>
                 <span>
-                  {post.user?.role ?? "Learner"} ·{" "}
-                  {post.time_ago ?? timeAgo(post.created_at)}
+                  {post.user?.role ?? "Learner"} · {timeAgo(post.created_at)}
                 </span>
               </div>
             </div>
@@ -1159,9 +1408,7 @@ const SocialFeed: React.FC = () => {
         );
       })}
 
-      {/* ─── Infinite scroll indicators ──────────────────────────────────── */}
-
-      {/* Loading more spinner (only when we have posts and are fetching more) */}
+      {/* Infinite scroll indicators */}
       {isLoading && posts.length > 0 && (
         <div style={{ textAlign: "center", padding: "20px 0" }}>
           <RefreshCw
@@ -1174,7 +1421,6 @@ const SocialFeed: React.FC = () => {
         </div>
       )}
 
-      {/* End of feed message */}
       {!hasMore && posts.length > 0 && (
         <p
           style={{
@@ -1184,7 +1430,7 @@ const SocialFeed: React.FC = () => {
             padding: "10px 0",
           }}
         >
-          You’ve seen all posts
+          You've seen all posts
         </p>
       )}
 

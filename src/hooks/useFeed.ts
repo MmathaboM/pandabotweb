@@ -1,4 +1,3 @@
-
 import { useCallback } from "react";
 import { useFeedStore } from "../stores/FeedStore";
 import { feedService, type FeedComment } from "../services/FeedService";
@@ -19,7 +18,7 @@ export const useFeed = () => {
     } finally {
       store.setRefreshing(false);
     }
-  }, []);
+  }, [store]);
 
   const load = useCallback(async () => {
     if (store.isLoading || store.posts.length > 0) return;
@@ -33,7 +32,7 @@ export const useFeed = () => {
     } finally {
       store.setLoading(false);
     }
-  }, [store.isLoading, store.posts.length]);
+  }, [store.isLoading, store.posts.length, store]);
 
   const loadMore = useCallback(async () => {
     if (store.isLoading || !store.hasMore) return;
@@ -48,17 +47,20 @@ export const useFeed = () => {
     } finally {
       store.setLoading(false);
     }
-  }, [store.isLoading, store.hasMore, store.page]);
+  }, [store.isLoading, store.hasMore, store.page, store]);
 
   /** Optimistic like — field is liked_by_me */
-  const toggleLike = useCallback(async (postId: number) => {
-    store.toggleLike(postId);
-    try {
-      await feedService.toggleLike(postId);
-    } catch {
-      store.toggleLike(postId); // revert
-    }
-  }, []);
+  const toggleLike = useCallback(
+    async (postId: number) => {
+      store.toggleLike(postId);
+      try {
+        await feedService.toggleLike(postId);
+      } catch {
+        store.toggleLike(postId); // revert
+      }
+    },
+    [store],
+  );
 
   /**
    * Optimistic pin — calls PUT /social/posts/{id} with { is_pinned }
@@ -74,7 +76,7 @@ export const useFeed = () => {
         store.togglePin(postId); // revert
       }
     },
-    [],
+    [store],
   );
 
   const createPost = useCallback(
@@ -88,7 +90,7 @@ export const useFeed = () => {
         return false;
       }
     },
-    [],
+    [store],
   );
 
   const fetchComments = useCallback(
@@ -120,8 +122,9 @@ export const useFeed = () => {
         return null;
       }
     },
-    [],
+    [store],
   );
+
   const deletePost = useCallback(
     async (postId: number) => {
       try {
@@ -131,7 +134,7 @@ export const useFeed = () => {
         store.setError(getApiError(err));
       }
     },
-    [store, feedService],
+    [store],
   );
 
   return {
@@ -147,7 +150,7 @@ export const useFeed = () => {
     togglePin,
     createPost,
     fetchComments,
-    addComment,
+    addComment, 
     deletePost,
   };
 };

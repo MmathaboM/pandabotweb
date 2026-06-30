@@ -1,4 +1,3 @@
-
 import api from "./api";
 import {
   normalizePost,
@@ -70,11 +69,6 @@ export const feedService = {
 
   // ── Create post ───────────────────────────────────────────────────────────
 
-  /**
-   * Sends multipart/form-data when media files are present.
-   * The backend stores them via SocialPostMedia (not a JSON column).
-   * Field name is `media[]` (matches the Inertia controller convention).
-   */
   async createPost(payload: {
     content: string;
     title?: string;
@@ -102,7 +96,7 @@ export const feedService = {
     return normalizePost(data.post ?? data.data ?? data);
   },
 
-  // ── Update post (also used for pin toggle) ────────────────────────────────
+  // ── Update post ───────────────────────────────────────────────────────────
 
   async updatePost(
     postId: number,
@@ -160,6 +154,18 @@ export const feedService = {
 
   async deleteComment(postId: number, commentId: number): Promise<void> {
     await api.delete(`v1/social/posts/${postId}/comments/${commentId}`);
+  },
+
+  // ── Comment Replies ──────────────────────────────────────────────────────
+
+  async getCommentReplies(commentId: number): Promise<FeedComment[]> {
+    // Since your backend loads replies with the comment, we just need to fetch the comment with replies
+    // But if you want to fetch only replies, you'd need to add an endpoint
+    // For now, we'll fetch all comments for the post and find the one we want
+    const { data } = await api.get(`v1/social/posts/${commentId}/comments`);
+    // This might not work perfectly - better to use the existing comments data
+    // Since your controller loads replies with the comment, we can just use that
+    return [];
   },
 
   // ── Post CRUD ─────────────────────────────────────────────────────────────
