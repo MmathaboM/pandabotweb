@@ -1,5 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { X, RefreshCw, Camera } from "lucide-react";
+import {
+  X,
+  RefreshCw,
+  Camera,
+  Zap,
+  ZapOff,
+  Image as ImageIcon,
+} from "lucide-react";
 import { authService } from "../../../services/authService";
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 
@@ -26,6 +33,8 @@ type VerifyStep =
   | "processing"
   | "manual";
 
+const FILE_SCAN_CONTAINER_ID = "qr-file-scan-box";
+
 export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   const [step, setStep] = useState<VerifyStep>("loading");
   const [userProfile, setUserProfile] = useState<any>(null);
@@ -35,8 +44,11 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   const [statusMsg, setStatusMsg] = useState(
     "Point camera at the barcode on the back of your ID",
   );
+  const [torchOn, setTorchOn] = useState(false);
+  const [torchSupported, setTorchSupported] = useState(false);
 
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   // Keep userProfile in a ref so callbacks always see the latest value
   // without needing to be in the dependency array
   const userProfileRef = useRef<any>(null);
@@ -61,7 +73,22 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
       }
       scannerRef.current = null;
     }
+    setTorchOn(false);
+    setTorchSupported(false);
   }, []);
+
+  // ─── Torch / flashlight toggle ───────────────────────────────────────────
+  const toggleTorch = useCallback(async () => {
+    if (!scannerRef.current) return;
+    try {
+      await scannerRef.current.applyVideoConstraints({
+        advanced: [{ torch: !torchOn }],
+      } as any);
+      setTorchOn((prev) => !prev);
+    } catch {
+      alert("Flashlight isn't supported on this device/browser.");
+    }
+  }, [torchOn]);
 
   // ─── SA ID barcode parser ────────────────────────────────────────────────
   const parseSAIDBarcode = useCallback((data: string): ParsedID => {
@@ -289,27 +316,40 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
       stream.getTracks().forEach((t) => t.stop());
     } catch {
       setCameraError(
-        "Camera permission was denied. Allow camera access and try again.",
+        "Camera permission was denied. Allow camera access and try again, or take a photo of the barcode instead.",
       );
       setStep("permission-denied");
       return;
     }
 
     try {
+      // Restrict to PDF417 only (that's what SA ID barcodes are) and use
+      // the browser's native BarcodeDetector when available — much faster
+      // and more reliable than the JS-only fallback decoder.
       const scanner = new Html5Qrcode(CONTAINER_ID, {
-        formatsToSupport: [
-          Html5QrcodeSupportedFormats.PDF_417,
-          Html5QrcodeSupportedFormats.QR_CODE,
-          Html5QrcodeSupportedFormats.DATA_MATRIX,
-          Html5QrcodeSupportedFormats.AZTEC,
-        ],
+        formatsToSupport: [Html5QrcodeSupportedFormats.PDF_417],
+        experimentalFeatures: {
+          useBarCodeDetectorIfSupported: true,
+        },
         verbose: false,
       });
       scannerRef.current = scanner;
 
       await scanner.start(
-        { facingMode: "environment" },
-        { fps: 15 },
+        {
+          facingMode: "environment",
+          // Ask for a higher-res feed — PDF417 is dense and needs detail.
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        } as any,
+        {
+          fps: 10,
+          // Wide, short box matching the shape of a PDF417 barcode — scans
+          // a smaller region so it decodes faster and more accurately.
+          qrbox: { width: 320, height: 180 },
+          aspectRatio: 1.7,
+          disableFlip: true,
+        },
         async (decodedText) => {
           if (!scannerRef.current) return;
           await stopScanner();
@@ -332,12 +372,74 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           // per-frame decode failures are normal — ignore
         },
       );
+
+      // Best-effort flashlight support check — helps a lot with glossy,
+      // laminated ID cards under poor lighting.
+      try {
+        const caps = scanner.getRunningTrackCapabilities() as any;
+        setTorchSupported(!!caps?.torch);
+      } catch {
+        setTorchSupported(false);
+      }
     } catch (err: any) {
       console.error("Scanner start error:", err);
       setCameraError("Unable to start the camera. " + (err?.message || ""));
       setStep("permission-denied");
     }
   }, [stopScanner, parseSAIDBarcode, runVerification]);
+
+  // ─── Photo fallback: decode a still image instead of live video ─────────
+  const handlePhotoSelected = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = ""; // allow re-selecting the same file later
+      if (!file) return;
+
+      await stopScanner();
+      setStep("processing");
+      setStatusMsg("Reading barcode from photo…");
+
+      let tempDiv = document.getElementById(FILE_SCAN_CONTAINER_ID);
+      if (!tempDiv) {
+        tempDiv = document.createElement("div");
+        tempDiv.id = FILE_SCAN_CONTAINER_ID;
+        tempDiv.style.display = "none";
+        document.body.appendChild(tempDiv);
+      }
+
+      try {
+        const fileScanner = new Html5Qrcode(FILE_SCAN_CONTAINER_ID, {
+          formatsToSupport: [Html5QrcodeSupportedFormats.PDF_417],
+          experimentalFeatures: {
+            useBarCodeDetectorIfSupported: true,
+          },
+          verbose: false,
+        });
+
+        const decodedText = await fileScanner.scanFile(file, false);
+        fileScanner.clear();
+
+        const parsed = parseSAIDBarcode(decodedText);
+        if (!parsed.idNumber || parsed.idNumber.length !== 13) {
+          alert(
+            `Could not extract a valid 13-digit ID number from that photo.\n\n` +
+              `Raw data: ${decodedText.substring(0, 100)}\n\n` +
+              `Try again with better lighting/focus, or enter your ID manually.`,
+          );
+          setStep("scanning");
+          return;
+        }
+
+        await runVerification(parsed);
+      } catch {
+        alert(
+          "Could not read a barcode from that photo. Make sure the whole barcode is in frame, well-lit, and in focus — or enter your ID manually.",
+        );
+        setStep("scanning");
+      }
+    },
+    [stopScanner, parseSAIDBarcode, runVerification],
+  );
 
   // ─── Manual entry submit ─────────────────────────────────────────────────
   const handleManualVerify = useCallback(async () => {
@@ -402,6 +504,8 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   useEffect(() => {
     return () => {
       stopScanner();
+      const tempDiv = document.getElementById(FILE_SCAN_CONTAINER_ID);
+      if (tempDiv) tempDiv.remove();
     };
   }, [stopScanner]);
 
@@ -445,11 +549,25 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           </button>
           <button
             style={{ ...s.btnSecondary, marginTop: 10 }}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            Take a photo instead
+          </button>
+          <button
+            style={{ ...s.btnSecondary, marginTop: 10 }}
             onClick={() => setStep("manual")}
           >
             Enter ID manually
           </button>
         </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          style={{ display: "none" }}
+          onChange={handlePhotoSelected}
+        />
         <style>{KEYFRAMES}</style>
       </div>
     );
@@ -563,7 +681,17 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           <X size={20} color="#fff" />
         </button>
         <h1 style={s.headerTitle}>Scan ID barcode</h1>
-        <div style={{ width: 40 }} />
+        {torchSupported ? (
+          <button onClick={toggleTorch} style={s.backBtn}>
+            {torchOn ? (
+              <ZapOff size={18} color="#fff" />
+            ) : (
+              <Zap size={18} color="#fff" />
+            )}
+          </button>
+        ) : (
+          <div style={{ width: 40 }} />
+        )}
       </div>
 
       <div
@@ -582,15 +710,33 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         </div>
       </div>
 
-      <button
-        style={s.manualBtn}
-        onClick={() => {
-          stopScanner();
-          setStep("manual");
-        }}
-      >
-        Enter ID manually
-      </button>
+      <div style={s.actionsBar}>
+        <button
+          style={s.manualBtn}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <ImageIcon size={16} style={{ marginRight: 8 }} />
+          Take a photo instead
+        </button>
+        <button
+          style={s.manualBtn}
+          onClick={() => {
+            stopScanner();
+            setStep("manual");
+          }}
+        >
+          Enter ID manually
+        </button>
+      </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        style={{ display: "none" }}
+        onChange={handlePhotoSelected}
+      />
 
       <style>{KEYFRAMES}</style>
     </div>
@@ -657,7 +803,7 @@ const s: Record<string, React.CSSProperties> = {
     zIndex: 10,
   },
   scanFrame: {
-    width: 280,
+    width: 320,
     height: 180,
     border: "2px solid rgba(251,133,0,0.8)",
     borderRadius: 12,
@@ -677,11 +823,18 @@ const s: Record<string, React.CSSProperties> = {
     borderRadius: 6,
     padding: "4px 8px",
   },
-  manualBtn: {
+  actionsBar: {
     position: "absolute",
-    bottom: 40,
+    bottom: 30,
     left: "50%",
     transform: "translateX(-50%)",
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    alignItems: "center",
+    zIndex: 20,
+  },
+  manualBtn: {
     background: "rgba(0,0,0,0.65)",
     border: "1px solid rgba(255,255,255,0.3)",
     color: "#fff",
@@ -690,8 +843,10 @@ const s: Record<string, React.CSSProperties> = {
     fontSize: 15,
     fontWeight: 500,
     cursor: "pointer",
-    zIndex: 20,
     whiteSpace: "nowrap",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
   },
   permCard: {
     background: "#fff",
