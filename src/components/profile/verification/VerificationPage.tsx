@@ -33,20 +33,43 @@ type VerifyStep =
   | "processing"
   | "manual";
 
-const FILE_SCAN_CONTAINER_ID = "qr-file-scan-box";
+type ScanMode = "native" | "fallback" | null;
 
-// Sizes the scan box relative to the actual camera viewfinder so it can
-// never be bigger than the video feed (that mismatch was causing the
-// scanner to fail to start on some phones).
+const FILE_SCAN_CONTAINER_ID = "qr-file-scan-box";
+const CONTAINER_ID = "qr-scanner-box";
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Checks that this browser has BOTH the native BarcodeDetector API AND
+// that it actually reports PDF417 support (this is the check that was
+// missing before — some browsers have the API but not this format).
+const isNativeDetectorSupported = async (): Promise<boolean> => {
+  if (typeof window === "undefined" || !("BarcodeDetector" in window)) {
+    return false;
+  }
+  try {
+    const formats: string[] = await (
+      window as any
+    ).BarcodeDetector.getSupportedFormats();
+    return formats.includes("pdf_417") || formats.includes("pdf417");
+  } catch {
+    return false;
+  }
+};
+
+// Sizes the visual guide box relative to the actual camera viewfinder.
+// This is purely a visual hint (like the mobile "Scan" overlay) — it does
+// NOT crop or restrict what gets scanned in either mode.
 const qrboxFunction = (viewfinderWidth: number, viewfinderHeight: number) => {
   const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
   const boxWidth = Math.floor(minEdge * 0.85);
-  const boxHeight = Math.floor(boxWidth * 0.55); // wide rectangle, like a PDF417 barcode
+  const boxHeight = Math.floor(boxWidth * 0.55);
   return { width: boxWidth, height: boxHeight };
 };
 
 export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   const [step, setStep] = useState<VerifyStep>("loading");
+  const [scanMode, setScanMode] = useState<ScanMode>(null);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [idNumber, setIdNumber] = useState("");
   const [confirmIdNumber, setConfirmIdNumber] = useState("");
@@ -57,20 +80,36 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   const [torchOn, setTorchOn] = useState(false);
   const [torchSupported, setTorchSupported] = useState(false);
 
-  const scannerRef = useRef<Html5Qrcode | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  // Keep userProfile in a ref so callbacks always see the latest value
-  // without needing to be in the dependency array
-  const userProfileRef = useRef<any>(null);
-  const CONTAINER_ID = "qr-scanner-box";
+  // native-path refs
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const detectorRef = useRef<any>(null);
+  const scanningActiveRef = useRef(false);
+  const scanModeRef = useRef<ScanMode>(null);
 
-  // Keep ref in sync with state
+  // fallback-path ref
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const userProfileRef = useRef<any>(null);
+
   useEffect(() => {
     userProfileRef.current = userProfile;
   }, [userProfile]);
 
-  // ─── Stop scanner ────────────────────────────────────────────────────────
+  // ─── Stop everything (both scan modes) ───────────────────────────────────
   const stopScanner = useCallback(async () => {
+    scanningActiveRef.current = false;
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    detectorRef.current = null;
+
     if (scannerRef.current) {
       try {
         const state = (scannerRef.current as any).getState?.();
@@ -83,17 +122,26 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
       }
       scannerRef.current = null;
     }
+
     setTorchOn(false);
     setTorchSupported(false);
   }, []);
 
-  // ─── Torch / flashlight toggle ───────────────────────────────────────────
+  // ─── Torch / flashlight toggle (works for either scan mode) ─────────────
   const toggleTorch = useCallback(async () => {
-    if (!scannerRef.current) return;
     try {
-      await scannerRef.current.applyVideoConstraints({
-        advanced: [{ torch: !torchOn }],
-      } as any);
+      if (scanModeRef.current === "native" && streamRef.current) {
+        const track = streamRef.current.getVideoTracks()[0];
+        await track.applyConstraints({
+          advanced: [{ torch: !torchOn }],
+        } as any);
+      } else if (scannerRef.current) {
+        await scannerRef.current.applyVideoConstraints({
+          advanced: [{ torch: !torchOn }],
+        } as any);
+      } else {
+        throw new Error("no active track");
+      }
       setTorchOn((prev) => !prev);
     } catch {
       alert("Flashlight isn't supported on this device/browser.");
@@ -315,28 +363,48 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     [compareWithProfile, submitVerification],
   );
 
-  // ─── Start scanner ───────────────────────────────────────────────────────
-  const startScanner = useCallback(async () => {
-    await stopScanner();
+  // ─── Native BarcodeDetector loop (same engine the OS camera app uses) ───
+  const runNativeDetectionLoop = useCallback(async () => {
+    scanningActiveRef.current = true;
+    while (scanningActiveRef.current) {
+      if (
+        !videoRef.current ||
+        !detectorRef.current ||
+        videoRef.current.readyState < 2
+      ) {
+        await sleep(120);
+        continue;
+      }
+      try {
+        const barcodes = await detectorRef.current.detect(videoRef.current);
+        if (barcodes && barcodes.length > 0 && scanningActiveRef.current) {
+          const raw = barcodes[0].rawValue as string;
+          scanningActiveRef.current = false;
+          await stopScanner();
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
-      });
-      stream.getTracks().forEach((t) => t.stop());
-    } catch {
-      setCameraError(
-        "Camera permission was denied. Allow camera access and try again, or take a photo of the barcode instead.",
-      );
-      setStep("permission-denied");
-      return;
+          const parsed = parseSAIDBarcode(raw);
+          if (!parsed.idNumber || parsed.idNumber.length !== 13) {
+            const tryManual = window.confirm(
+              `Could not extract a valid 13-digit ID number.\n\n` +
+                `Raw data: ${raw.substring(0, 100)}\n\n` +
+                `Enter ID manually?`,
+            );
+            setStep(tryManual ? "manual" : "scanning");
+            return;
+          }
+          await runVerification(parsed);
+          return;
+        }
+      } catch {
+        // per-frame detection errors are normal — ignore and keep looping
+      }
+      await sleep(150);
     }
+  }, [stopScanner, parseSAIDBarcode, runVerification]);
 
+  // ─── Fallback scanner (JS decoder, for browsers without native support) ─
+  const startFallbackScanner = useCallback(async () => {
     try {
-      // Restrict to PDF417 only (that's what SA ID barcodes are).
-      // NOTE: deliberately NOT using the native BarcodeDetector experimental
-      // feature — it doesn't reliably support PDF417 on many Android/Chrome
-      // versions and was causing the scanner to fail to start at all.
       const scanner = new Html5Qrcode(CONTAINER_ID, {
         formatsToSupport: [Html5QrcodeSupportedFormats.PDF_417],
         verbose: false,
@@ -345,19 +413,12 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
 
       await scanner.start(
         { facingMode: "environment" },
-        {
-          fps: 10,
-          // Function-based box: sized relative to the actual camera feed,
-          // so it can never exceed the video dimensions (that mismatch was
-          // another cause of the scanner failing silently on some phones).
-          qrbox: qrboxFunction,
-        },
+        { fps: 10, qrbox: qrboxFunction },
         async (decodedText) => {
           if (!scannerRef.current) return;
           await stopScanner();
 
           const parsed = parseSAIDBarcode(decodedText);
-
           if (!parsed.idNumber || parsed.idNumber.length !== 13) {
             const tryManual = window.confirm(
               `Could not extract a valid 13-digit ID number.\n\n` +
@@ -367,7 +428,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
             setStep(tryManual ? "manual" : "scanning");
             return;
           }
-
           await runVerification(parsed);
         },
         () => {
@@ -375,8 +435,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         },
       );
 
-      // Best-effort flashlight support check — helps a lot with glossy,
-      // laminated ID cards under poor lighting.
       try {
         const caps = scanner.getRunningTrackCapabilities() as any;
         setTorchSupported(!!caps?.torch);
@@ -384,55 +442,128 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         setTorchSupported(false);
       }
     } catch (err: any) {
-      console.error("Scanner start error:", err);
+      console.error("Fallback scanner start error:", err);
       setCameraError("Unable to start the camera. " + (err?.message || ""));
       setStep("permission-denied");
     }
   }, [stopScanner, parseSAIDBarcode, runVerification]);
 
-  // ─── Photo fallback: decode a still image instead of live video ─────────
-  // Note: this opens your phone's native camera app, so there's no on-screen
-  // frame to line the barcode up in — that's normal. Just take a clear photo
-  // of the whole back of the ID; the whole image gets scanned automatically.
+  // ─── Start scanner: try native OS-level detection first ─────────────────
+  const startScanner = useCallback(async () => {
+    await stopScanner();
+
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" },
+      });
+    } catch {
+      setCameraError(
+        "Camera permission was denied. Allow camera access and try again, or take a photo of the barcode instead.",
+      );
+      setStep("permission-denied");
+      return;
+    }
+
+    const nativeOk = await isNativeDetectorSupported();
+    scanModeRef.current = nativeOk ? "native" : "fallback";
+    setScanMode(nativeOk ? "native" : "fallback");
+
+    if (nativeOk) {
+      streamRef.current = stream;
+      // give the video element a tick to mount before attaching the stream
+      await sleep(0);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        try {
+          await videoRef.current.play();
+        } catch {
+          // some browsers need a user gesture; ignore, detection still runs once playing
+        }
+      }
+      try {
+        detectorRef.current = new (window as any).BarcodeDetector({
+          formats: ["pdf417"],
+        });
+      } catch {
+        detectorRef.current = null;
+      }
+      try {
+        const track = stream.getVideoTracks()[0];
+        const caps = track.getCapabilities?.() as any;
+        setTorchSupported(!!caps?.torch);
+      } catch {
+        setTorchSupported(false);
+      }
+      runNativeDetectionLoop();
+    } else {
+      // this permission-check stream isn't needed — html5-qrcode opens its own
+      stream.getTracks().forEach((t) => t.stop());
+      await sleep(0);
+      await startFallbackScanner();
+    }
+  }, [stopScanner, runNativeDetectionLoop, startFallbackScanner]);
+
+  // ─── Photo fallback: decode a still image, no framing needed ────────────
   const handlePhotoSelected = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
-      e.target.value = ""; // allow re-selecting the same file later
+      e.target.value = "";
       if (!file) return;
 
       await stopScanner();
       setStep("processing");
       setStatusMsg("Reading barcode from photo…");
 
-      let tempDiv = document.getElementById(FILE_SCAN_CONTAINER_ID);
-      if (!tempDiv) {
-        tempDiv = document.createElement("div");
-        tempDiv.id = FILE_SCAN_CONTAINER_ID;
-        tempDiv.style.display = "none";
-        document.body.appendChild(tempDiv);
-      }
-
       try {
-        const fileScanner = new Html5Qrcode(FILE_SCAN_CONTAINER_ID, {
-          formatsToSupport: [Html5QrcodeSupportedFormats.PDF_417],
-          verbose: false,
-        });
+        const nativeOk = await isNativeDetectorSupported();
 
-        const decodedText = await fileScanner.scanFile(file, false);
-        fileScanner.clear();
+        if (nativeOk && "createImageBitmap" in window) {
+          const bitmap = await createImageBitmap(file);
+          const detector = new (window as any).BarcodeDetector({
+            formats: ["pdf417"],
+          });
+          const barcodes = await detector.detect(bitmap);
+          if (!barcodes || barcodes.length === 0) {
+            throw new Error("No barcode found");
+          }
+          const parsed = parseSAIDBarcode(barcodes[0].rawValue);
+          if (!parsed.idNumber || parsed.idNumber.length !== 13) {
+            alert(
+              `Could not extract a valid 13-digit ID number from that photo.\n\n` +
+                `Try again with better lighting, hold the camera steady, and make sure the barcode isn't blurry — or enter your ID manually.`,
+            );
+            setStep("scanning");
+            return;
+          }
+          await runVerification(parsed);
+        } else {
+          // JS decoder fallback for photo
+          let tempDiv = document.getElementById(FILE_SCAN_CONTAINER_ID);
+          if (!tempDiv) {
+            tempDiv = document.createElement("div");
+            tempDiv.id = FILE_SCAN_CONTAINER_ID;
+            tempDiv.style.display = "none";
+            document.body.appendChild(tempDiv);
+          }
+          const fileScanner = new Html5Qrcode(FILE_SCAN_CONTAINER_ID, {
+            formatsToSupport: [Html5QrcodeSupportedFormats.PDF_417],
+            verbose: false,
+          });
+          const decodedText = await fileScanner.scanFile(file, false);
+          fileScanner.clear();
 
-        const parsed = parseSAIDBarcode(decodedText);
-        if (!parsed.idNumber || parsed.idNumber.length !== 13) {
-          alert(
-            `Could not extract a valid 13-digit ID number from that photo.\n\n` +
-              `Raw data: ${decodedText.substring(0, 100)}\n\n` +
-              `Try again with better lighting, hold the camera steady, and make sure the barcode isn't blurry — or enter your ID manually.`,
-          );
-          setStep("scanning");
-          return;
+          const parsed = parseSAIDBarcode(decodedText);
+          if (!parsed.idNumber || parsed.idNumber.length !== 13) {
+            alert(
+              `Could not extract a valid 13-digit ID number from that photo.\n\n` +
+                `Try again with better lighting, hold the camera steady, and make sure the barcode isn't blurry — or enter your ID manually.`,
+            );
+            setStep("scanning");
+            return;
+          }
+          await runVerification(parsed);
         }
-
-        await runVerification(parsed);
       } catch {
         alert(
           "Could not read a barcode from that photo. Try again in better lighting and hold the camera steady so the barcode isn't blurry — or enter your ID manually.",
@@ -696,6 +827,20 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         )}
       </div>
 
+      {/* Both mounts always exist so refs are ready regardless of which
+          mode gets chosen; only the active one is visible. */}
+      <video
+        ref={videoRef}
+        playsInline
+        muted
+        autoPlay
+        style={{
+          width: "100%",
+          height: "calc(100vh - 60px)",
+          objectFit: "cover",
+          display: scanMode === "native" ? "block" : "none",
+        }}
+      />
       <div
         id={CONTAINER_ID}
         style={{
@@ -703,8 +848,29 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           height: "calc(100vh - 60px)",
           position: "relative",
           overflow: "hidden",
+          display: scanMode === "fallback" ? "block" : "none",
         }}
       />
+
+      {scanMode === null && (
+        <div
+          style={{
+            position: "absolute",
+            top: 60,
+            left: 0,
+            width: "100%",
+            height: "calc(100vh - 60px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <RefreshCw
+            size={32}
+            style={{ animation: "spin .8s linear infinite", color: "#fff" }}
+          />
+        </div>
+      )}
 
       <div style={s.overlay}>
         <div style={s.scanFrame}>
