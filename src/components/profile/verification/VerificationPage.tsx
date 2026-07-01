@@ -1,17 +1,14 @@
-// VerifyIDPage.tsx
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   X,
   RefreshCw,
   Camera,
+  Zap,
+  ZapOff,
   Image as ImageIcon,
-  Shield,
-  ShieldCheck,
 } from "lucide-react";
 import { authService } from "../../../services/authService";
-
-// Declare Scanbot SDK
-declare const ScanbotSDK: any;
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 
 interface VerifyIDPageProps {
   onBack: () => void;
@@ -34,8 +31,21 @@ type VerifyStep =
   | "scanning"
   | "permission-denied"
   | "processing"
-  | "manual"
-  | "result";
+  | "manual";
+
+const FILE_SCAN_CONTAINER_ID = "qr-file-scan-box";
+const CONTAINER_ID = "qr-scanner-box";
+
+// Sizes the visual guide box to match the actual shape of an SA ID barcode
+// (wide and short, not square). html5-qrcode crops the scan region to this
+// box, so getting the aspect ratio close to the real barcode meaningfully
+// improves decode reliability.
+const qrboxFunction = (viewfinderWidth: number, viewfinderHeight: number) => {
+  const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+  const boxWidth = Math.floor(minEdge * 0.92);
+  const boxHeight = Math.floor(boxWidth * 0.32);
+  return { width: boxWidth, height: boxHeight };
+};
 
 export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   const [step, setStep] = useState<VerifyStep>("loading");
@@ -46,185 +56,52 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   const [statusMsg, setStatusMsg] = useState(
     "Point camera at the barcode on the back of your ID",
   );
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [scanResult, setScanResult] = useState<ParsedID | null>(null);
-  const [verificationResult, setVerificationResult] = useState<any>(null);
-  const [showResult, setShowResult] = useState(false);
-  const [isScanning, setIsScanning] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
+  const [torchSupported, setTorchSupported] = useState(false);
 
-  // Refs
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const scannerRef = useRef<any>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const userProfileRef = useRef<any>(null);
 
   useEffect(() => {
     userProfileRef.current = userProfile;
   }, [userProfile]);
 
-  // ─── Initialize Scanbot SDK ──────────────────────────────────────────────
-  const initScanbot = useCallback(async () => {
-    try {
-      if (typeof ScanbotSDK === "undefined") {
-        throw new Error("Scanbot SDK not loaded");
-      }
-
-      // Initialize SDK with license (empty for 60-second trial)
-      await ScanbotSDK.initialize({
-        license: "", // Empty for trial
-        // Or use your license key: "YOUR_LICENSE_KEY_HERE"
-      });
-
-      console.log("Scanbot SDK initialized");
-      return true;
-    } catch (error: any) {
-      console.error("Failed to initialize Scanbot:", error);
-      throw new Error("Failed to initialize scanner");
-    }
-  }, []);
-
-  // ─── Start Camera ──────────────────────────────────────────────────────
-  const startCamera = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "environment",
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-      });
-
-      streamRef.current = stream;
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-
-      return stream;
-    } catch (error: any) {
-      console.error("Camera error:", error);
-      if (
-        error.name === "NotAllowedError" ||
-        error.name === "PermissionDeniedError"
-      ) {
-        setCameraError(
-          "Camera permission was denied. Allow camera access and try again.",
-        );
-        setStep("permission-denied");
-      } else {
-        setCameraError("Failed to access camera: " + error.message);
-        setStep("permission-denied");
-      }
-      throw error;
-    }
-  }, []);
-
-  // ─── Stop Camera ──────────────────────────────────────────────────────
-  const stopCamera = useCallback(() => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
+  // ─── Stop the live camera scanner ────────────────────────────────────────
+  const stopScanner = useCallback(async () => {
     if (scannerRef.current) {
       try {
-        scannerRef.current.stop();
-      } catch {
-        // Ignore
-      }
-      scannerRef.current = null;
-    }
-  }, []);
-
-  // ─── Start Scanning with Scanbot ──────────────────────────────────────
-  const startScanning = useCallback(async () => {
-    try {
-      setIsScanning(true);
-      setStatusMsg("Starting camera...");
-
-      // Initialize SDK
-      await initScanbot();
-
-      // Start camera
-      await startCamera();
-
-      // Create scanner instance
-      const scanner = new ScanbotSDK.BarcodeScanner();
-      scannerRef.current = scanner;
-
-      // Configure for PDF417
-      const config = new ScanbotSDK.BarcodeScannerConfiguration();
-      config.setBarcodeFormats([
-        ScanbotSDK.BarcodeFormat.PDF_417,
-        ScanbotSDK.BarcodeFormat.QR_CODE,
-        ScanbotSDK.BarcodeFormat.CODE_128,
-      ]);
-      config.setRecognitionMode(ScanbotSDK.RecognitionMode.AUTO);
-
-      // Set up video stream for scanning
-      if (videoRef.current) {
-        await scanner.attachVideoStream(videoRef.current);
-      }
-
-      // Set up result handler
-      scanner.onBarcodeDetected((result: any) => {
-        if (result && result.barcodes && result.barcodes.length > 0) {
-          const barcode = result.barcodes[0];
-          const rawData = barcode.text || "";
-
-          if (rawData) {
-            setIsScanning(false);
-            stopCamera();
-
-            const parsed = parseSAIDBarcode(rawData);
-            if (parsed.idNumber && parsed.idNumber.length === 13) {
-              setScanResult(parsed);
-              runVerification(parsed);
-            } else {
-              Alert(
-                "Invalid Barcode",
-                `Could not extract a valid 13-digit ID number.\n\nRaw data: ${rawData.substring(
-                  0,
-                  100,
-                )}`,
-              );
-              setStep("scanning");
-            }
-          }
+        const state = (scannerRef.current as any).getState?.();
+        if (state === 2 || state === 3) {
+          await scannerRef.current.stop();
         }
-      });
-
-      // Start detection
-      await scanner.startDetection();
-
-      setStatusMsg("Point camera at the barcode on the back of your ID");
-    } catch (error: any) {
-      console.error("Failed to start scanning:", error);
-      setIsScanning(false);
-      Alert("Error", "Failed to start scanning. Please try again.");
-      setStep("permission-denied");
-    }
-  }, [initScanbot, startCamera, stopCamera]);
-
-  // ─── Stop Scanning ──────────────────────────────────────────────────
-  const stopScanning = useCallback(() => {
-    setIsScanning(false);
-    if (scannerRef.current) {
-      try {
-        scannerRef.current.stopDetection();
-        scannerRef.current.stop();
+        scannerRef.current.clear();
       } catch {
-        // Ignore
+        // ignore stop errors — scanner may already be stopped
       }
       scannerRef.current = null;
     }
-    stopCamera();
-  }, [stopCamera]);
+    setTorchOn(false);
+    setTorchSupported(false);
+  }, []);
 
-  // ─── Parse SA ID Barcode ──────────────────────────────────────────────
+  // ─── Torch / flashlight toggle ────────────────────────────────────────────
+  const toggleTorch = useCallback(async () => {
+    if (!scannerRef.current) {
+      alert("Flashlight isn't supported on this device/browser.");
+      return;
+    }
+    try {
+      await scannerRef.current.applyVideoConstraints({
+        advanced: [{ torch: !torchOn }],
+      } as any);
+      setTorchOn((prev) => !prev);
+    } catch {
+      alert("Flashlight isn't supported on this device/browser.");
+    }
+  }, [torchOn]);
+
+  // ─── SA ID barcode parser ────────────────────────────────────────────────
   const parseSAIDBarcode = useCallback((data: string): ParsedID => {
     let idNumber = "";
     let surname = "";
@@ -273,7 +150,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     };
   }, []);
 
-  // ─── Profile Comparison ──────────────────────────────────────────────
+  // ─── Profile comparison (reads from ref, not state) ──────────────────────
   const normalizeString = useCallback(
     (str: string): string => str.toLowerCase().trim().replace(/\s+/g, " "),
     [],
@@ -374,133 +251,213 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     [nameMatchesAny, normalizeString, datesMatch],
   );
 
-  // ─── Submit to Backend ──────────────────────────────────────────────
-  const submitVerification = useCallback(async (idNum: string) => {
-    setStatusMsg("Submitting verification…");
-    try {
-      const res = await authService.verifyID(idNum);
-      if (res.success) {
-        setVerificationResult({ success: true, data: res });
-        setStep("result");
-        setShowResult(true);
-      } else {
-        Alert("Verification Failed", res.message || "Please try again.");
+  // ─── Submit to backend ───────────────────────────────────────────────────
+  const submitVerification = useCallback(
+    async (idNum: string) => {
+      setStatusMsg("Submitting verification…");
+      try {
+        const res = await authService.verifyID(idNum);
+        if (res.success) {
+          alert(
+            "ID verified successfully!\n\nYou now have a higher trust score and priority application processing.",
+          );
+          onBack();
+        } else {
+          alert(res.message || "Verification failed. Please try again.");
+          setStep("scanning");
+        }
+      } catch (err: any) {
+        alert(err?.message || "Something went wrong. Please try again.");
         setStep("scanning");
       }
-    } catch (err: any) {
-      Alert("Error", err?.message || "Something went wrong.");
-      setStep("scanning");
-    }
-  }, []);
+    },
+    [onBack],
+  );
 
-  // ─── Full Verification Flow ──────────────────────────────────────────
+  // ─── Full verify flow ────────────────────────────────────────────────────
   const runVerification = useCallback(
     async (parsed: ParsedID) => {
-      setIsProcessing(true);
+      setStep("processing");
       setStatusMsg("Validating ID number…");
 
       try {
         const validateRes = await authService.validateIDNumber(parsed.idNumber);
         if (!validateRes.success) {
-          Alert("Invalid ID", validateRes.message || "Please try again.");
+          alert(validateRes.message || "Invalid ID number. Please try again.");
           setStep("scanning");
-          setIsProcessing(false);
           return;
         }
 
         const { mismatches } = compareWithProfile(parsed);
 
-        // Build confirmation message
-        let confirmMsg = `ID Scanned\n\n`;
-        confirmMsg += `ID Number: ${parsed.idNumber}\n`;
-        if (parsed.fullNames) confirmMsg += `Name: ${parsed.fullNames}\n`;
-        if (parsed.surname) confirmMsg += `Surname: ${parsed.surname}\n`;
-        if (parsed.date_of_birth)
-          confirmMsg += `DOB: ${parsed.date_of_birth}\n`;
-        if (parsed.gender) confirmMsg += `Gender: ${parsed.gender}\n`;
-        if (mismatches.length) {
-          confirmMsg += `\n⚠️ Mismatches with your profile:\n${mismatches.join("\n")}\n`;
-        }
-        confirmMsg += `\nProceed with verification?`;
+        const confirmMsg =
+          `ID scanned\n\n` +
+          `ID Number: ${parsed.idNumber}\n` +
+          (parsed.fullNames ? `Name on ID: ${parsed.fullNames}\n` : "") +
+          (parsed.surname ? `Surname: ${parsed.surname}\n` : "") +
+          (parsed.date_of_birth ? `DOB: ${parsed.date_of_birth}\n` : "") +
+          (parsed.gender ? `Gender: ${parsed.gender}\n` : "") +
+          (mismatches.length
+            ? `\nMismatches with your profile:\n${mismatches.join("\n")}\n`
+            : "") +
+          `\nProceed with verification?`;
 
-        if (window.confirm(confirmMsg)) {
-          await submitVerification(parsed.idNumber);
-        } else {
+        if (!window.confirm(confirmMsg)) {
           setStep("scanning");
+          return;
         }
-        setIsProcessing(false);
+
+        await submitVerification(parsed.idNumber);
       } catch (err: any) {
-        Alert("Error", err?.message || "Something went wrong.");
+        alert(err?.message || "Something went wrong. Please try again.");
         setStep("scanning");
-        setIsProcessing(false);
       }
     },
     [compareWithProfile, submitVerification],
   );
 
-  // ─── Photo Upload ────────────────────────────────────────────────────
-  const handlePhotoUpload = useCallback(
-    async (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      if (!file) return;
+  // ─── Start the live camera scanner ───────────────────────────────────────
+  const startScanner = useCallback(async () => {
+    await stopScanner();
+    setCameraError(null);
 
-      event.target.value = "";
-      stopScanning();
-      setIsProcessing(true);
-      setStatusMsg("Reading barcode from photo…");
+    try {
+      const scanner = new Html5Qrcode(CONTAINER_ID, {
+        formatsToSupport: [Html5QrcodeSupportedFormats.PDF_417],
+        verbose: false,
+        // Lets html5-qrcode use the browser's native BarcodeDetector when
+        // available and it supports PDF417, and transparently fall back to
+        // its own decoder otherwise. This is far more robust than trying to
+        // manage that switch ourselves.
+        experimentalFeatures: {
+          useBarCodeDetectorIfSupported: true,
+        },
+      } as any);
+      scannerRef.current = scanner;
+
+      await scanner.start(
+        { facingMode: "environment" },
+        {
+          fps: 15,
+          qrbox: qrboxFunction,
+          disableFlip: false,
+          videoConstraints: {
+            facingMode: "environment",
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            advanced: [{ focusMode: "continuous" }],
+          } as any,
+        },
+        async (decodedText) => {
+          if (!scannerRef.current) return;
+          await stopScanner();
+
+          const parsed = parseSAIDBarcode(decodedText);
+          if (!parsed.idNumber || parsed.idNumber.length !== 13) {
+            const tryManual = window.confirm(
+              `Could not extract a valid 13-digit ID number.\n\n` +
+                `Raw data: ${decodedText.substring(0, 100)}\n\n` +
+                `Enter ID manually?`,
+            );
+            setStep(tryManual ? "manual" : "scanning");
+            return;
+          }
+          await runVerification(parsed);
+        },
+        () => {
+          // per-frame decode failures are normal — ignore
+        },
+      );
 
       try {
-        // Initialize SDK
-        await initScanbot();
+        const caps = scanner.getRunningTrackCapabilities() as any;
+        setTorchSupported(!!caps?.torch);
+      } catch {
+        setTorchSupported(false);
+      }
+    } catch (err: any) {
+      console.error("Camera scanner start error:", err);
+      let message =
+        "Unable to start the camera. Take a photo of the barcode instead.";
+      if (
+        err?.name === "NotAllowedError" ||
+        /permission/i.test(err?.message || "")
+      ) {
+        message =
+          "Camera permission was denied. Allow camera access and try again, or take a photo of the barcode instead.";
+      } else if (err?.name === "NotFoundError") {
+        message =
+          "No camera was found on this device. Take a photo of the barcode instead.";
+      }
+      setCameraError(message);
+      setStep("permission-denied");
+    }
+  }, [stopScanner, parseSAIDBarcode, runVerification]);
 
-        // Use Scanbot to scan image
-        const scanner = new ScanbotSDK.BarcodeScanner();
-        const result = await scanner.scanImage(file);
+  // ─── Photo fallback: decode a still image, no framing needed ────────────
+  // Uses the same html5-qrcode decoder as the live scanner (just via
+  // scanFile instead of start), so this path can never diverge from — or
+  // be broken independently of — the camera scan path.
+  const handlePhotoSelected = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file) return;
 
-        if (result && result.barcodes && result.barcodes.length > 0) {
-          const rawData = result.barcodes[0].text || "";
-          const parsed = parseSAIDBarcode(rawData);
+      await stopScanner();
+      setStep("processing");
+      setStatusMsg("Reading barcode from photo…");
 
-          if (parsed.idNumber && parsed.idNumber.length === 13) {
-            setScanResult(parsed);
-            await runVerification(parsed);
-          } else {
-            Alert(
-              "Invalid Barcode",
-              `Could not extract a valid 13-digit ID number from that photo.`,
-            );
-            setStep("scanning");
-            setIsProcessing(false);
-          }
-        } else {
-          Alert(
-            "No Barcode Found",
-            "Could not read a barcode from that photo.",
+      let tempDiv = document.getElementById(FILE_SCAN_CONTAINER_ID);
+      if (!tempDiv) {
+        tempDiv = document.createElement("div");
+        tempDiv.id = FILE_SCAN_CONTAINER_ID;
+        tempDiv.style.display = "none";
+        document.body.appendChild(tempDiv);
+      }
+
+      const fileScanner = new Html5Qrcode(FILE_SCAN_CONTAINER_ID, {
+        formatsToSupport: [Html5QrcodeSupportedFormats.PDF_417],
+        verbose: false,
+      });
+
+      try {
+        const decodedText = await fileScanner.scanFile(file, false);
+        const parsed = parseSAIDBarcode(decodedText);
+        if (!parsed.idNumber || parsed.idNumber.length !== 13) {
+          alert(
+            `Could not extract a valid 13-digit ID number from that photo.\n\n` +
+              `Try again with better lighting, hold the camera steady, and make sure the barcode isn't blurry — or enter your ID manually.`,
           );
           setStep("scanning");
-          setIsProcessing(false);
+          return;
         }
-      } catch (error: any) {
-        Alert(
-          "Error",
-          "Could not read barcode from photo. Please try again with better lighting.",
+        await runVerification(parsed);
+      } catch {
+        alert(
+          "Could not read a barcode from that photo. Try again in better lighting, get closer so the barcode fills more of the frame, and make sure it isn't blurry — or enter your ID manually.",
         );
         setStep("scanning");
-        setIsProcessing(false);
+      } finally {
+        try {
+          fileScanner.clear();
+        } catch {
+          // ignore
+        }
       }
     },
-    [initScanbot, parseSAIDBarcode, runVerification, stopScanning],
+    [stopScanner, parseSAIDBarcode, runVerification],
   );
 
-  // ─── Manual Entry ────────────────────────────────────────────────────
+  // ─── Manual entry submit ─────────────────────────────────────────────────
   const handleManualVerify = useCallback(async () => {
     const id = idNumber.trim();
     if (!/^\d{13}$/.test(id)) {
-      Alert("Invalid ID", "Enter a valid 13-digit SA ID number.");
+      alert("Enter a valid 13-digit SA ID number.");
       return;
     }
     if (id !== confirmIdNumber.trim()) {
-      Alert("ID Mismatch", "ID numbers do not match.");
+      alert("ID numbers do not match.");
       return;
     }
     await runVerification({
@@ -516,59 +473,289 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     });
   }, [idNumber, confirmIdNumber, runVerification]);
 
-  // ─── Alert Helper ────────────────────────────────────────────────────
-  const Alert = (title: string, message: string) => {
-    alert(`${title}\n\n${message}`);
-  };
-
-  // ─── Load Profile ────────────────────────────────────────────────────
+  // ─── Load profile on mount ───────────────────────────────────────────────
   useEffect(() => {
-    let mounted = true;
-    const loadProfile = async () => {
+    let cancelled = false;
+    (async () => {
       try {
         const cached = authService.getCachedUser();
-        if (cached && mounted) {
+        if (cached) {
           setUserProfile(cached);
           userProfileRef.current = cached;
-        } else if (mounted) {
+        } else {
           const fresh = await authService.getCurrentUser();
-          setUserProfile(fresh);
-          userProfileRef.current = fresh;
+          if (!cancelled) {
+            setUserProfile(fresh);
+            userProfileRef.current = fresh;
+          }
         }
-      } catch (error) {
-        console.error("Failed to load profile:", error);
+      } catch {
+        // non-fatal
       }
-      if (mounted) {
-        setStep("scanning");
-        setTimeout(() => startScanning(), 500);
-      }
-    };
-    loadProfile();
+      if (!cancelled) setStep("scanning");
+    })();
     return () => {
-      mounted = false;
-      stopScanning();
+      cancelled = true;
+      stopScanner();
     };
-  }, [startScanning, stopScanning]);
+  }, [stopScanner]);
 
-  // ─── Cleanup ─────────────────────────────────────────────────────────
+  // ─── Start scanner when step becomes "scanning" ──────────────────────────
+  const isScanning = step === "scanning";
+  useEffect(() => {
+    if (!isScanning) return;
+    const t = setTimeout(() => startScanner(), 120);
+    return () => clearTimeout(t);
+  }, [isScanning, startScanner]);
+
+  // ─── Cleanup on unmount ──────────────────────────────────────────────────
   useEffect(() => {
     return () => {
-      stopScanning();
+      stopScanner();
+      const tempDiv = document.getElementById(FILE_SCAN_CONTAINER_ID);
+      if (tempDiv) tempDiv.remove();
     };
-  }, [stopScanning]);
+  }, [stopScanner]);
 
-  // ─── Render Functions ───────────────────────────────────────────────
-  // (Same render functions as previous version)
-  // ... (render functions here)
+  // ─── Render: loading ─────────────────────────────────────────────────────
+  if (step === "loading") {
+    return (
+      <div style={s.root}>
+        <RefreshCw
+          size={32}
+          style={{ animation: "spin .8s linear infinite", color: "#fb8500" }}
+        />
+        <span style={{ marginTop: 16, color: "#9ca3af", fontSize: 14 }}>
+          Loading your profile…
+        </span>
+        <style>{KEYFRAMES}</style>
+      </div>
+    );
+  }
 
-  // For brevity, I'm showing the main structure
-  // The full render functions would go here
+  // ─── Render: permission denied ───────────────────────────────────────────
+  if (step === "permission-denied") {
+    return (
+      <div
+        style={{
+          ...s.root,
+          justifyContent: "center",
+          alignItems: "center",
+          padding: 24,
+        }}
+      >
+        <div style={s.permCard}>
+          <div style={s.permIcon}>
+            <Camera size={40} color="#fb8500" />
+          </div>
+          <h2 style={s.permTitle}>Camera access needed</h2>
+          <p style={s.permMsg}>
+            {cameraError || "Allow camera access to scan your ID barcode."}
+          </p>
+          <button style={s.btnPrimary} onClick={() => setStep("scanning")}>
+            Try again
+          </button>
+          <button
+            style={{ ...s.btnSecondary, marginTop: 10 }}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            Take a photo instead
+          </button>
+          <button
+            style={{ ...s.btnSecondary, marginTop: 10 }}
+            onClick={() => setStep("manual")}
+          >
+            Enter ID manually
+          </button>
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          style={{ display: "none" }}
+          onChange={handlePhotoSelected}
+        />
+        <style>{KEYFRAMES}</style>
+      </div>
+    );
+  }
 
-  return <div style={styles.root}>{/* Content */}</div>;
+  // ─── Render: manual entry ────────────────────────────────────────────────
+  if (step === "manual") {
+    return (
+      <div
+        style={{
+          ...s.root,
+          background: "#fff",
+          justifyContent: "center",
+          alignItems: "center",
+          padding: 24,
+        }}
+      >
+        <div style={{ width: "100%", maxWidth: 400 }}>
+          <button
+            onClick={() => setStep("scanning")}
+            style={{
+              background: "none",
+              border: "none",
+              color: "#fb8500",
+              fontWeight: 600,
+              fontSize: 14,
+              cursor: "pointer",
+              marginBottom: 20,
+              padding: 0,
+            }}
+          >
+            ← Back to scanner
+          </button>
+          <h2
+            style={{
+              fontSize: 20,
+              fontWeight: 700,
+              marginBottom: 20,
+              color: "#1a1a2e",
+            }}
+          >
+            Enter ID manually
+          </h2>
+          <div style={s.inputGroup}>
+            <label style={s.label}>SA ID number</label>
+            <input
+              style={s.input}
+              type="text"
+              value={idNumber}
+              onChange={(e) =>
+                setIdNumber(e.target.value.replace(/\D/g, "").slice(0, 13))
+              }
+              placeholder="13-digit SA ID number"
+              maxLength={13}
+            />
+          </div>
+          <div style={s.inputGroup}>
+            <label style={s.label}>Confirm ID number</label>
+            <input
+              style={s.input}
+              type="text"
+              value={confirmIdNumber}
+              onChange={(e) =>
+                setConfirmIdNumber(
+                  e.target.value.replace(/\D/g, "").slice(0, 13),
+                )
+              }
+              placeholder="Re-enter ID number"
+              maxLength={13}
+            />
+          </div>
+          <button
+            style={{ ...s.btnPrimary, width: "100%", marginTop: 8 }}
+            onClick={handleManualVerify}
+          >
+            Verify
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Render: processing ──────────────────────────────────────────────────
+  if (step === "processing") {
+    return (
+      <div
+        style={{
+          ...s.root,
+          background: "#000",
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        <RefreshCw
+          size={40}
+          style={{ animation: "spin .8s linear infinite", color: "#fff" }}
+        />
+        <p style={{ color: "#fff", marginTop: 16, fontSize: 16 }}>
+          {statusMsg}
+        </p>
+        <style>{KEYFRAMES}</style>
+      </div>
+    );
+  }
+
+  // ─── Render: scanning ────────────────────────────────────────────────────
+  return (
+    <div style={{ ...s.root, background: "#000" }}>
+      <div style={s.header}>
+        <button onClick={onBack} style={s.backBtn}>
+          <X size={20} color="#fff" />
+        </button>
+        <h1 style={s.headerTitle}>Scan ID barcode</h1>
+        {torchSupported ? (
+          <button onClick={toggleTorch} style={s.backBtn}>
+            {torchOn ? (
+              <ZapOff size={18} color="#fff" />
+            ) : (
+              <Zap size={18} color="#fff" />
+            )}
+          </button>
+        ) : (
+          <div style={{ width: 40 }} />
+        )}
+      </div>
+
+      <div
+        id={CONTAINER_ID}
+        style={{
+          width: "100%",
+          height: "calc(100vh - 60px)",
+          position: "relative",
+          overflow: "hidden",
+        }}
+      />
+
+      <div style={s.overlay}>
+        <div style={s.scanFrame}>
+          <p style={s.scanHint}>{statusMsg}</p>
+        </div>
+      </div>
+
+      <div style={s.actionsBar}>
+        <button
+          style={s.manualBtn}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <ImageIcon size={16} style={{ marginRight: 8 }} />
+          Take a photo instead
+        </button>
+        <button
+          style={s.manualBtn}
+          onClick={() => {
+            stopScanner();
+            setStep("manual");
+          }}
+        >
+          Enter ID manually
+        </button>
+      </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        style={{ display: "none" }}
+        onChange={handlePhotoSelected}
+      />
+
+      <style>{KEYFRAMES}</style>
+    </div>
+  );
 };
 
-// ─── Styles ──────────────────────────────────────────────────────────────
-const styles: Record<string, React.CSSProperties> = {
+// ─── Constants ────────────────────────────────────────────────────────────────
+const KEYFRAMES = `@keyframes spin { to { transform: rotate(360deg); } }`;
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+const s: Record<string, React.CSSProperties> = {
   root: {
     position: "fixed",
     top: 0,
@@ -580,9 +767,162 @@ const styles: Record<string, React.CSSProperties> = {
     zIndex: 1000,
     fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     alignItems: "center",
-    background: "#000",
   },
-  // ... (all other styles)
+  header: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    padding: "14px 16px",
+    width: "100%",
+    background: "rgba(0,0,0,0.6)",
+    zIndex: 20,
+    height: 60,
+    boxSizing: "border-box",
+  },
+  backBtn: {
+    background: "rgba(255,255,255,0.15)",
+    border: "none",
+    width: 40,
+    height: 40,
+    borderRadius: "50%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    cursor: "pointer",
+  },
+  headerTitle: {
+    flex: 1,
+    margin: 0,
+    fontSize: 18,
+    fontWeight: 700,
+    color: "#fff",
+    textAlign: "center",
+  },
+  overlay: {
+    position: "absolute",
+    top: 60,
+    left: 0,
+    width: "100%",
+    height: "calc(100vh - 60px)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    pointerEvents: "none",
+    zIndex: 10,
+  },
+  scanFrame: {
+    width: 300,
+    height: 100,
+    border: "2px solid rgba(251,133,0,0.8)",
+    borderRadius: 12,
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    padding: "0 16px 16px",
+  },
+  scanHint: {
+    color: "#fff",
+    fontSize: 13,
+    textAlign: "center",
+    margin: 0,
+    textShadow: "0 1px 4px rgba(0,0,0,0.8)",
+    background: "rgba(0,0,0,0.4)",
+    borderRadius: 6,
+    padding: "4px 8px",
+  },
+  actionsBar: {
+    position: "absolute",
+    bottom: 30,
+    left: "50%",
+    transform: "translateX(-50%)",
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    alignItems: "center",
+    zIndex: 20,
+  },
+  manualBtn: {
+    background: "rgba(0,0,0,0.65)",
+    border: "1px solid rgba(255,255,255,0.3)",
+    color: "#fff",
+    padding: "12px 28px",
+    borderRadius: 30,
+    fontSize: 15,
+    fontWeight: 500,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  permCard: {
+    background: "#fff",
+    borderRadius: 20,
+    padding: "32px 24px",
+    maxWidth: 400,
+    width: "100%",
+    textAlign: "center",
+  },
+  permIcon: {
+    width: 72,
+    height: 72,
+    borderRadius: "50%",
+    background: "#fff3e0",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    margin: "0 auto 16px",
+  },
+  permTitle: {
+    fontSize: 20,
+    fontWeight: 700,
+    color: "#1a1a2e",
+    marginBottom: 8,
+  },
+  permMsg: {
+    color: "#6b7280",
+    fontSize: 14,
+    lineHeight: 1.6,
+    marginBottom: 24,
+  },
+  btnPrimary: {
+    background: "#fb8500",
+    color: "#fff",
+    border: "none",
+    padding: "12px 24px",
+    borderRadius: 8,
+    fontWeight: 600,
+    fontSize: 15,
+    cursor: "pointer",
+    width: "100%",
+  },
+  btnSecondary: {
+    background: "#f3f4f6",
+    color: "#1a1a2e",
+    border: "none",
+    padding: "12px 24px",
+    borderRadius: 8,
+    fontWeight: 600,
+    fontSize: 15,
+    cursor: "pointer",
+    width: "100%",
+  },
+  inputGroup: { marginBottom: 14 },
+  label: {
+    display: "block",
+    fontWeight: 600,
+    fontSize: 13,
+    marginBottom: 4,
+    color: "#374151",
+  },
+  input: {
+    width: "100%",
+    padding: "10px 12px",
+    border: "2px solid #e5e7eb",
+    borderRadius: 8,
+    fontSize: 16,
+    outline: "none",
+    boxSizing: "border-box",
+  },
 };
-
-export default VerifyIDPage;
