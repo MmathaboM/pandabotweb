@@ -555,9 +555,27 @@ const CSS = `
   .pf-overlay__name { margin: 22px 0 0; font-size: 20px; font-weight: 700; color: #fff; }
   .pf-overlay__edit-btn { display: flex; align-items: center; gap: 8px; margin-top: 18px; padding: 13px 28px; background: var(--primary); color: #fff; font-size: 14px; font-weight: 700; border: none; border-radius: 50px; cursor: pointer; transition: opacity 0.15s; }
   .pf-overlay__edit-btn:hover { opacity: 0.9; }
-  .pf-modal-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,0.5); display: flex; align-items: flex-end; justify-content: center; }
+  .pf-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 999999;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
   @media (min-width: 480px) { .pf-modal-overlay { align-items: center; } }
-  .pf-modal { background: #fff; border-radius: 20px 20px 0 0; width: 100%; max-width: 480px; padding: 24px; max-height: 90vh; overflow-y: auto; }
+  .pf-modal {
+  position: relative;
+  z-index: 1000000;
+  background: #fff;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 480px;
+  padding: 24px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
   @media (min-width: 480px) { .pf-modal { border-radius: 20px; } }
   .pf-modal__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
   .pf-modal__header h3 { margin: 0; font-size: 17px; font-weight: 700; color: var(--text-primary); }
