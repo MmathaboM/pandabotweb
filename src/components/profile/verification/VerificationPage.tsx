@@ -723,7 +723,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           style={s.manualBtn}
           onClick={() => fileInputRef.current?.click()}
         >
-          <ImageIcon size={16} style={{ marginRight: 8, marginTop: -30, marginBottom: 40 }} />
+          <ImageIcon size={16} style={{ marginRight: 8,  marginBottom: 100 }} />
           Take a photo instead
         </button>
         <button
