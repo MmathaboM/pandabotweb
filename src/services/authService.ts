@@ -239,8 +239,8 @@ export const authService = {
         "/v1/auth/password",
         {
           current_password: currentPassword,
-          password: newPassword,
-          password_confirmation: newPassword,
+          new_password: newPassword,
+          new_password_confirmation: newPassword,
         },
         { headers: { Authorization: `Bearer ${token}` } },
       );
