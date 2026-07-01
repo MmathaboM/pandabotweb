@@ -1,3 +1,4 @@
+// chatService.ts
 import {
   Conversation,
   Message,
@@ -33,7 +34,6 @@ export const chatService = {
     return res.json();
   },
 
-  
   sendMessage: async (
     conversationId: number,
     payload: SendMessagePayload,
@@ -43,10 +43,18 @@ export const chatService = {
       {
         method: "POST",
         headers: getHeaders(),
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          body: payload.body || null,
+          attachment: payload.attachment || null,
+          reply_to_id: payload.reply_to_id || null,
+        }),
       },
     );
-    if (!res.ok) throw new Error("Failed to send message");
+    if (!res.ok) {
+      const errorText = await res.text();
+      console.error("API Error:", errorText);
+      throw new Error(`Failed to send message: ${res.status}`);
+    }
     return res.json();
   },
 
@@ -89,7 +97,6 @@ export const chatService = {
     });
   },
 
-  // Typing
   sendTyping: async (conversationId: number): Promise<void> => {
     await fetch(`${BASE_URL}/conversations/${conversationId}/typing`, {
       method: "POST",
@@ -108,7 +115,6 @@ export const chatService = {
     return res.json();
   },
 
-  // Group member management
   addMember: async (conversationId: number, userId: number): Promise<void> => {
     await fetch(`${BASE_URL}/groups/${conversationId}/members`, {
       method: "POST",

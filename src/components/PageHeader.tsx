@@ -8,7 +8,7 @@ interface PageHeaderProps {
   onRightClick?: () => void;
   rightDisabled?: boolean;
   rightSpinning?: boolean;
-  rightContent?: React.ReactNode; // custom content for the right side
+  rightContent?: React.ReactNode; 
 }
 
 const PageHeader: React.FC<PageHeaderProps> = ({

@@ -160,6 +160,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     height: "100%",
     backgroundColor: "#F3F4F6",
     fontFamily: "system-ui, -apple-system, sans-serif",
+    marginBottom: 50,
   },
   header: {
     background: "#FB8500",

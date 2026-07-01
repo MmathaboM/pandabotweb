@@ -305,10 +305,11 @@ export default function AssessmentView({
         <style>{assessmentViewCSS}</style>
         <div className="av-container">
           <div className="av-header">
-            <button onClick={onBack} className="av-ghost-btn av-ghost-btn-sm">
-              <ArrowLeft size={18} /> Back
+            <button onClick={onBack} className="av-back-btn">
+              <ArrowLeft size={20} color="#fff" strokeWidth={2} />
             </button>
-            <h1 className="av-title">{assessment?.title}</h1>
+            <span className="av-header-title">{assessment?.title}</span>
+            <div className="av-header-right" />
           </div>
           {renderResult()}
         </div>
@@ -319,68 +320,74 @@ export default function AssessmentView({
   if ((viewState === "taking" || viewState === "submitting") && assessment) {
     const isSubmitting = viewState === "submitting";
     const questions = assessment.questions as ApiQuestion[] | undefined;
+
     return (
       <>
         <style>{assessmentViewCSS}</style>
-        <div className="av-container">
+        <div className="av-assessment-wrapper">
+          {/* Sticky Header */}
           <div className="av-header">
-            <button onClick={onBack} className="av-ghost-btn av-ghost-btn-sm">
-              <ArrowLeft size={18} /> Back
+            <button onClick={onBack} className="av-back-btn">
+              <ArrowLeft size={20} color="#fff" strokeWidth={2} />
             </button>
-            <h1 className="av-title">{assessment.title}</h1>
-            {/* Timer always rendered if timeLeft is not null – now it will be set */}
+            <span className="av-header-title">{assessment.title}</span>
             {timeLeft !== null && (
-              <div
-                className={`av-timer${timeLeft < 60 ? " av-timer-urgent" : ""}`}
-              >
-                <Clock size={15} />
+              <div className="av-header-timer">
+                <Clock size={15} color="#fff" />
                 <span>{formatTime(timeLeft)}</span>
               </div>
             )}
           </div>
 
-          <div className="av-meta-bar">
-            <span>{assessment.description}</span>
-            <span className="av-meta-pills">
-              <span className="av-pill">Pass: {DEFAULT_PASS_SCORE}%</span>
-              <span className="av-pill">
-                {questions?.length ?? 0} questions
-              </span>
-            </span>
-          </div>
+          {/* Scrollable Content */}
+          <div className="av-scrollable-content">
+            <div className="av-content-inner">
+              <div className="av-meta-bar">
+                <span>{assessment.description}</span>
+                <span className="av-meta-pills">
+                  <span className="av-pill">{assessment.title}</span>
+                  <span className="av-pill">Pass: {DEFAULT_PASS_SCORE}%</span>
+                  <span className="av-pill">
+                    {questions?.length ?? 0}{" "}
+                    {(questions?.length ?? 0) === 1 ? "Q" : "Qs"}
+                  </span>
+                </span>
+              </div>
 
-          <div className="av-progress-wrap">
-            <div className="av-progress-track">
-              <div
-                className="av-progress-fill"
-                style={{ width: `${progressPct}%` }}
-              />
+              <div className="av-progress-wrap">
+                <div className="av-progress-track">
+                  <div
+                    className="av-progress-fill"
+                    style={{ width: `${progressPct}%` }}
+                  />
+                </div>
+                <span className="av-progress-label">
+                  {answeredCount} / {totalQuestions} answered
+                </span>
+              </div>
+
+              <div className="av-questions">
+                {questions?.map((q, idx) => renderQuestion(q, idx))}
+              </div>
+
+              <div className="av-actions">
+                <button
+                  onClick={handleSubmit}
+                  disabled={isSubmitting}
+                  className="av-submit-btn"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <span className="av-btn-spinner" /> Submitting…
+                    </>
+                  ) : (
+                    <>
+                      <Send size={16} /> Submit assessment
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
-            <span className="av-progress-label">
-              {answeredCount} / {totalQuestions} answered
-            </span>
-          </div>
-
-          <div className="av-questions">
-            {questions?.map((q, idx) => renderQuestion(q, idx))}
-          </div>
-
-          <div className="av-actions">
-            <button
-              onClick={handleSubmit}
-              disabled={isSubmitting}
-              className="av-submit-btn"
-            >
-              {isSubmitting ? (
-                <>
-                  <span className="av-btn-spinner" /> Submitting…
-                </>
-              ) : (
-                <>
-                  <Send size={16} /> Submit assessment
-                </>
-              )}
-            </button>
           </div>
         </div>
       </>
@@ -390,107 +397,148 @@ export default function AssessmentView({
   return null;
 }
 
-// ─── CSS styles (unchanged) ────────────────────────────────────────────
+// ─── CSS styles ────────────────────────────────────────────────────────────
 
 export const assessmentViewCSS = `
-  /* ── Layout ── */
-  .av-container {
-    max-width: 760px;
-    margin: 0 auto;
-    padding: 24px 20px 48px;
+  /* ── Assessment Wrapper (full height) ── */
+  .av-assessment-wrapper {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: #f7f8fa;
+    overflow: hidden;
   }
 
-  /* ── Header ── */
-  .av-header {
+  /* ── Header (sticky, dark) ── */
+.av-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: linear-gradient(135deg, #fb8500 0%, #e67600 100%);
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  min-height: 64px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+  .av-back-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.1);
+    border: none;
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-bottom: 28px;
-    flex-wrap: wrap;
-  }
-  .av-title {
-    flex: 1;
-    margin: 0;
-    font-size: 20px;
-    font-weight: 600;
-    color: #1F2933;
-    line-height: 1.3;
-  }
-
-  /* ── Ghost button (back / secondary) ── */
-  .av-ghost-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: none;
-    border: 1.5px solid #e2e8f0;
-    border-radius: 10px;
-    color: #4a5568;
-    font-size: 14px;
-    font-weight: 500;
-    padding: 8px 14px;
+    justify-content: center;
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s, color 0.15s;
-    white-space: nowrap;
+    flex-shrink: 0;
+    transition: background 0.2s;
   }
-  .av-ghost-btn:hover {
-    background: #f7f8fa;
-    border-color: #c4cdd8;
-    color: #1F2933;
-  }
-  .av-ghost-btn-sm {
-    padding: 6px 12px;
-    font-size: 13px;
+  .av-back-btn:hover {
+    background: rgba(255,255,255,0.2);
   }
 
-  /* ── Timer ── */
-  .av-timer {
-    display: inline-flex;
+  .av-header-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #ffffff;
+    letter-spacing: 0.3px;
+    flex: 1;
+    text-align: center;
+    margin: 0 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .av-header-timer {
+    display: flex;
     align-items: center;
     gap: 6px;
-    background: #f1f5f9;
-    border: 1.5px solid #e2e8f0;
-    border-radius: 20px;
+    background: rgba(255,255,255,0.12);
     padding: 6px 14px;
+    border-radius: 20px;
+    color: #ffffff;
     font-size: 14px;
     font-weight: 600;
-    color: #1F2933;
-    transition: background 0.2s, border-color 0.2s;
+    flex-shrink: 0;
+    transition: background 0.3s;
   }
-  .av-timer-urgent {
-    background: #fff1f1;
-    border-color: #fca5a5;
-    color: #dc2626;
+  .av-header-timer.urgent {
+    background: rgba(220, 38, 38, 0.8);
     animation: av-pulse 1s ease-in-out infinite;
   }
   @keyframes av-pulse {
     0%, 100% { opacity: 1; }
-    50%       { opacity: 0.65; }
+    50% { opacity: 0.6; }
+  }
+
+  .av-header-right {
+    width: 40px;
+    flex-shrink: 0;
+  }
+
+  /* ── Scrollable Content ── */
+  .av-scrollable-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 20px 40px;
+  }
+  .av-scrollable-content::-webkit-scrollbar {
+    width: 6px;
+  }
+  .av-scrollable-content::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 10px;
+  }
+  .av-scrollable-content::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 10px;
+  }
+  .av-scrollable-content::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+  }
+
+  .av-content-inner {
+    max-width: 760px;
+    margin: 0 auto;
+  }
+
+  /* ── Container (for non-taking states) ── */
+  .av-container {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 20px 20px 48px;
   }
 
   /* ── Meta bar ── */
   .av-meta-bar {
     display: flex;
     align-items: flex-start;
-    justify-content: space-between;
+    justify-content: flex-start; 
     gap: 12px;
     flex-wrap: wrap;
-    background: #f8f9fb;
+    background: #ffffff;
     border: 1px solid #e8ecf0;
     border-radius: 12px;
     padding: 14px 18px;
     margin-bottom: 20px;
+    
     font-size: 14px;
     color: #4a5568;
     line-height: 1.5;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
   }
   .av-meta-pills {
     display: flex;
-    gap: 8px;
+    gap: 2px;
     flex-shrink: 0;
   }
   .av-pill {
-    background: #fff;
+    background: #f7f8fa;
     border: 1px solid #e2e8f0;
     border-radius: 20px;
     font-size: 12px;
@@ -534,11 +582,12 @@ export const assessmentViewCSS = `
     gap: 16px;
   }
   .av-question {
-    background: #fff;
+    background: #ffffff;
     border: 1px solid #e8ecf0;
     border-radius: 14px;
     padding: 22px 24px;
     transition: box-shadow 0.15s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
   }
   .av-question:focus-within {
     box-shadow: 0 0 0 3px rgba(251, 133, 0, 0.12);
@@ -629,6 +678,7 @@ export const assessmentViewCSS = `
     display: flex;
     justify-content: flex-end;
     margin-top: 32px;
+    padding-bottom: 20px;
   }
   .av-submit-btn {
     display: inline-flex;
@@ -675,6 +725,7 @@ export const assessmentViewCSS = `
     display: flex;
     flex-direction: column;
     gap: 20px;
+    margin-top: 20px;
   }
   .av-result-hero {
     border-radius: 16px;
@@ -776,6 +827,7 @@ export const assessmentViewCSS = `
     padding: 80px 24px;
     text-align: center;
     color: #4a5568;
+    min-height: 100vh;
   }
   .av-state-icon {
     width: 56px;

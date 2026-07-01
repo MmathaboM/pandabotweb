@@ -1,3 +1,4 @@
+// useChatStore.ts - WITH PROPER THROTTLING
 import { create } from "zustand";
 import { Conversation, Message } from "../types/chat";
 import { chatService } from "../services/chatService";
@@ -8,9 +9,12 @@ interface ChatState {
   messages: Message[];
   loading: boolean;
   error: string | null;
-
   typingUsers: { id: number; name: string }[];
   _typingPollTimer: ReturnType<typeof setInterval> | null;
+  _convPollTimer: ReturnType<typeof setInterval> | null;
+  _msgPollTimer: ReturnType<typeof setInterval> | null;
+  _lastMessageCount: number;
+  _isPolling: boolean;
 
   fetchConversations: () => Promise<void>;
   setActiveConversation: (conversation: Conversation) => Promise<void>;
@@ -26,16 +30,11 @@ interface ChatState {
     memberIds: number[],
     name?: string,
   ) => Promise<Conversation>;
-
   addGroupMember: (userId: number) => Promise<void>;
   removeGroupMember: (userId: number) => Promise<void>;
-
   sendTyping: () => Promise<void>;
   startTypingPoll: () => void;
   stopTypingPoll: () => void;
-
-  _convPollTimer: ReturnType<typeof setInterval> | null;
-  _msgPollTimer: ReturnType<typeof setInterval> | null;
   startPolling: () => void;
   stopPolling: () => void;
   startMessagePolling: () => void;
@@ -52,15 +51,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
   _typingPollTimer: null,
   _convPollTimer: null,
   _msgPollTimer: null,
+  _lastMessageCount: 0,
+  _isPolling: false,
 
   fetchConversations: async () => {
-    if (get().conversations.length === 0) {
-      set({ loading: true, error: null });
-    }
     try {
       const conversations = await chatService.getConversations();
       set({ conversations, loading: false });
     } catch (e: any) {
+      // Silent fail for 429 errors
+      if (e.message?.includes("429")) {
+        console.warn("Rate limited, skipping conversations fetch");
+        return;
+      }
       set({ error: e.message, loading: false });
     }
   },
@@ -68,10 +71,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
   startPolling: () => {
     const { _convPollTimer, fetchConversations } = get();
     if (_convPollTimer) return;
+
+    // Initial fetch
     fetchConversations();
+
+    // Poll every 10 seconds instead of 5
     const timer = setInterval(() => {
       fetchConversations();
-    }, 5000);
+    }, 10000);
     set({ _convPollTimer: timer });
   },
 
@@ -92,64 +99,64 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [],
       loading: true,
       typingUsers: [],
+      _lastMessageCount: 0,
     });
+
     try {
       const messages = await chatService.getMessages(conversation.id);
       await chatService.markRead(conversation.id);
-      set({ messages, loading: false });
+      set({ messages, loading: false, _lastMessageCount: messages.length });
     } catch (e: any) {
       set({ error: e.message, loading: false });
     }
 
-    get().startMessagePolling();
-    get().startTypingPoll();
+    // Start polling with delays
+    setTimeout(() => {
+      get().startMessagePolling();
+      get().startTypingPoll();
+    }, 1000);
   },
 
   clearActiveConversation: () => {
     get().stopMessagePolling();
     get().stopTypingPoll();
-    set({ activeConversation: null, messages: [], typingUsers: [] });
+    set({
+      activeConversation: null,
+      messages: [],
+      typingUsers: [],
+      _lastMessageCount: 0,
+      _isPolling: false,
+    });
   },
 
   startMessagePolling: () => {
     const { _msgPollTimer } = get();
     if (_msgPollTimer) return;
 
+    // Poll every 5 seconds instead of 3
     const timer = setInterval(async () => {
-      const { activeConversation, messages } = get();
-      if (!activeConversation) return;
+      const { activeConversation, messages, _isPolling } = get();
+      if (!activeConversation || _isPolling) return;
+
+      set({ _isPolling: true });
       try {
         const fresh = await chatService.getMessages(activeConversation.id);
 
-        const localMap = new Map(messages.map((m) => [m.id, m]));
-        const merged = fresh.map((f) => {
-          const local = localMap.get(f.id);
-          if (local && local.reply_to && !f.reply_to) {
-            return {
-              ...f,
-              reply_to: local.reply_to,
-              reply_to_id: local.reply_to_id,
-            };
-          }
-          return f;
-        });
-
-        const lastFresh = merged[merged.length - 1];
-        const lastLocal = messages[messages.length - 1];
-        const hasNew =
-          merged.length !== messages.length ||
-          (lastFresh && lastLocal && lastFresh.id !== lastLocal.id);
-
-        set({ messages: merged });
-
-        if (hasNew) {
+        // Only update if there are new messages
+        if (fresh.length !== messages.length) {
+          set({ messages: fresh, _lastMessageCount: fresh.length });
           await chatService.markRead(activeConversation.id);
           get().fetchConversations();
         }
-      } catch {
-        // silent
+      } catch (e: any) {
+        // Silent fail for 429
+        if (e.message?.includes("429")) {
+          console.warn("Rate limited, skipping messages poll");
+        }
+      } finally {
+        set({ _isPolling: false });
       }
-    }, 3000);
+    }, 5000);
 
     set({ _msgPollTimer: timer });
   },
@@ -158,24 +165,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { _msgPollTimer } = get();
     if (_msgPollTimer) {
       clearInterval(_msgPollTimer);
-      set({ _msgPollTimer: null });
+      set({ _msgPollTimer: null, _isPolling: false });
     }
   },
 
-  // ── Optimistic sendMessage with attachment ──────────────────────────────
-  sendMessage: async (
-    body: string,
-    replyToId?: number,
-    optimisticReplyTo?: Message,
-    attachment?: string,
-  ) => {
+  sendMessage: async (body, replyToId, optimisticReplyTo, attachment) => {
     const { activeConversation, messages } = get();
     if (!activeConversation) return;
 
     const tempId = -Date.now();
     const tempMessage: Message = {
       id: tempId,
-      sender_id: 0, // will be replaced
+      sender_id: 0,
       conversation_id: activeConversation.id,
       body,
       created_at: new Date().toISOString(),
@@ -208,6 +209,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (e: any) {
       set({ messages: messages.filter((m) => m.id !== tempId) });
       set({ error: e.message });
+      throw e;
     }
   },
 
@@ -269,6 +271,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { _typingPollTimer } = get();
     if (_typingPollTimer) return;
 
+    // Poll every 4 seconds instead of 2
     const timer = setInterval(async () => {
       const { activeConversation } = get();
       if (!activeConversation) return;
@@ -278,7 +281,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       } catch {
         // ignore
       }
-    }, 2000);
+    }, 4000);
 
     set({ _typingPollTimer: timer });
   },
