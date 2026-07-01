@@ -35,6 +35,16 @@ type VerifyStep =
 
 const FILE_SCAN_CONTAINER_ID = "qr-file-scan-box";
 
+// Sizes the scan box relative to the actual camera viewfinder so it can
+// never be bigger than the video feed (that mismatch was causing the
+// scanner to fail to start on some phones).
+const qrboxFunction = (viewfinderWidth: number, viewfinderHeight: number) => {
+  const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+  const boxWidth = Math.floor(minEdge * 0.85);
+  const boxHeight = Math.floor(boxWidth * 0.55); // wide rectangle, like a PDF417 barcode
+  return { width: boxWidth, height: boxHeight };
+};
+
 export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   const [step, setStep] = useState<VerifyStep>("loading");
   const [userProfile, setUserProfile] = useState<any>(null);
@@ -323,32 +333,24 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     }
 
     try {
-      // Restrict to PDF417 only (that's what SA ID barcodes are) and use
-      // the browser's native BarcodeDetector when available — much faster
-      // and more reliable than the JS-only fallback decoder.
+      // Restrict to PDF417 only (that's what SA ID barcodes are).
+      // NOTE: deliberately NOT using the native BarcodeDetector experimental
+      // feature — it doesn't reliably support PDF417 on many Android/Chrome
+      // versions and was causing the scanner to fail to start at all.
       const scanner = new Html5Qrcode(CONTAINER_ID, {
         formatsToSupport: [Html5QrcodeSupportedFormats.PDF_417],
-        experimentalFeatures: {
-          useBarCodeDetectorIfSupported: true,
-        },
         verbose: false,
       });
       scannerRef.current = scanner;
 
       await scanner.start(
-        {
-          facingMode: "environment",
-          // Ask for a higher-res feed — PDF417 is dense and needs detail.
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-        } as any,
+        { facingMode: "environment" },
         {
           fps: 10,
-          // Wide, short box matching the shape of a PDF417 barcode — scans
-          // a smaller region so it decodes faster and more accurately.
-          qrbox: { width: 320, height: 180 },
-          aspectRatio: 1.7,
-          disableFlip: true,
+          // Function-based box: sized relative to the actual camera feed,
+          // so it can never exceed the video dimensions (that mismatch was
+          // another cause of the scanner failing silently on some phones).
+          qrbox: qrboxFunction,
         },
         async (decodedText) => {
           if (!scannerRef.current) return;
@@ -389,6 +391,9 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   }, [stopScanner, parseSAIDBarcode, runVerification]);
 
   // ─── Photo fallback: decode a still image instead of live video ─────────
+  // Note: this opens your phone's native camera app, so there's no on-screen
+  // frame to line the barcode up in — that's normal. Just take a clear photo
+  // of the whole back of the ID; the whole image gets scanned automatically.
   const handlePhotoSelected = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
@@ -410,9 +415,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
       try {
         const fileScanner = new Html5Qrcode(FILE_SCAN_CONTAINER_ID, {
           formatsToSupport: [Html5QrcodeSupportedFormats.PDF_417],
-          experimentalFeatures: {
-            useBarCodeDetectorIfSupported: true,
-          },
           verbose: false,
         });
 
@@ -424,7 +426,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           alert(
             `Could not extract a valid 13-digit ID number from that photo.\n\n` +
               `Raw data: ${decodedText.substring(0, 100)}\n\n` +
-              `Try again with better lighting/focus, or enter your ID manually.`,
+              `Try again with better lighting, hold the camera steady, and make sure the barcode isn't blurry — or enter your ID manually.`,
           );
           setStep("scanning");
           return;
@@ -433,7 +435,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         await runVerification(parsed);
       } catch {
         alert(
-          "Could not read a barcode from that photo. Make sure the whole barcode is in frame, well-lit, and in focus — or enter your ID manually.",
+          "Could not read a barcode from that photo. Try again in better lighting and hold the camera steady so the barcode isn't blurry — or enter your ID manually.",
         );
         setStep("scanning");
       }
@@ -803,8 +805,8 @@ const s: Record<string, React.CSSProperties> = {
     zIndex: 10,
   },
   scanFrame: {
-    width: 320,
-    height: 180,
+    width: 280,
+    height: 160,
     border: "2px solid rgba(251,133,0,0.8)",
     borderRadius: 12,
     display: "flex",
