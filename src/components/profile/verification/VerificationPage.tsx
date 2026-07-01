@@ -8,7 +8,13 @@ import {
   Image as ImageIcon,
 } from "lucide-react";
 import { authService } from "../../../services/authService";
-import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
+
+// Dynamic import for ZXing from CDN
+declare global {
+  interface Window {
+    ZXing: any;
+  }
+}
 
 interface VerifyIDPageProps {
   onBack: () => void;
@@ -33,16 +39,27 @@ type VerifyStep =
   | "processing"
   | "manual";
 
-type ScanMode = "native" | "fallback" | null;
-
-const FILE_SCAN_CONTAINER_ID = "qr-file-scan-box";
-const CONTAINER_ID = "qr-scanner-box";
+type ScanMode = "native" | "zxing" | null;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Checks that this browser has BOTH the native BarcodeDetector API AND
-// that it actually reports PDF417 support (this is the check that was
-// missing before — some browsers have the API but not this format).
+// Load ZXing from CDN
+const loadZXing = (): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    if (window.ZXing) {
+      resolve();
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://unpkg.com/@zxing/library@0.22.0/umd/index.min.js";
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load ZXing library"));
+    document.head.appendChild(script);
+  });
+};
+
+// Checks if native BarcodeDetector API supports PDF417
 const isNativeDetectorSupported = async (): Promise<boolean> => {
   if (typeof window === "undefined" || !("BarcodeDetector" in window)) {
     return false;
@@ -57,16 +74,6 @@ const isNativeDetectorSupported = async (): Promise<boolean> => {
   }
 };
 
-// Sizes the visual guide box relative to the actual camera viewfinder.
-// This is purely a visual hint (like the mobile "Scan" overlay) — it does
-// NOT crop or restrict what gets scanned in either mode.
-const qrboxFunction = (viewfinderWidth: number, viewfinderHeight: number) => {
-  const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
-  const boxWidth = Math.floor(minEdge * 0.85);
-  const boxHeight = Math.floor(boxWidth * 0.55);
-  return { width: boxWidth, height: boxHeight };
-};
-
 export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   const [step, setStep] = useState<VerifyStep>("loading");
   const [scanMode, setScanMode] = useState<ScanMode>(null);
@@ -79,16 +86,18 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   );
   const [torchOn, setTorchOn] = useState(false);
   const [torchSupported, setTorchSupported] = useState(false);
+  const [zxingLoaded, setZxingLoaded] = useState(false);
 
-  // native-path refs
+  // Native path refs
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const detectorRef = useRef<any>(null);
   const scanningActiveRef = useRef(false);
   const scanModeRef = useRef<ScanMode>(null);
 
-  // fallback-path ref
-  const scannerRef = useRef<Html5Qrcode | null>(null);
+  // ZXing path refs
+  const zxingReaderRef = useRef<any>(null);
+  const zxingContainerRef = useRef<HTMLDivElement | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const userProfileRef = useRef<any>(null);
@@ -97,10 +106,22 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     userProfileRef.current = userProfile;
   }, [userProfile]);
 
+  // Load ZXing on mount
+  useEffect(() => {
+    loadZXing()
+      .then(() => setZxingLoaded(true))
+      .catch((err) => {
+        console.error("Failed to load ZXing:", err);
+        // Fall back to native only
+        setZxingLoaded(true);
+      });
+  }, []);
+
   // ─── Stop everything (both scan modes) ───────────────────────────────────
   const stopScanner = useCallback(async () => {
     scanningActiveRef.current = false;
 
+    // Stop native stream
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
@@ -110,24 +131,31 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     }
     detectorRef.current = null;
 
-    if (scannerRef.current) {
+    // Stop ZXing reader
+    if (zxingReaderRef.current) {
       try {
-        const state = (scannerRef.current as any).getState?.();
-        if (state === 2 || state === 3) {
-          await scannerRef.current.stop();
+        if (typeof zxingReaderRef.current.stop === "function") {
+          await zxingReaderRef.current.stop();
         }
-        scannerRef.current.clear();
+        if (typeof zxingReaderRef.current.reset === "function") {
+          await zxingReaderRef.current.reset();
+        }
       } catch {
-        // ignore stop errors
+        // Ignore stop errors
       }
-      scannerRef.current = null;
+      zxingReaderRef.current = null;
+    }
+
+    // Clear ZXing container
+    if (zxingContainerRef.current) {
+      zxingContainerRef.current.innerHTML = "";
     }
 
     setTorchOn(false);
     setTorchSupported(false);
   }, []);
 
-  // ─── Torch / flashlight toggle (works for either scan mode) ─────────────
+  // ─── Torch / flashlight toggle ───────────────────────────────────────────
   const toggleTorch = useCallback(async () => {
     try {
       if (scanModeRef.current === "native" && streamRef.current) {
@@ -135,14 +163,16 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         await track.applyConstraints({
           advanced: [{ torch: !torchOn }],
         } as any);
-      } else if (scannerRef.current) {
-        await scannerRef.current.applyVideoConstraints({
+        setTorchOn((prev) => !prev);
+      } else if (scanModeRef.current === "zxing" && streamRef.current) {
+        const track = streamRef.current.getVideoTracks()[0];
+        await track.applyConstraints({
           advanced: [{ torch: !torchOn }],
         } as any);
+        setTorchOn((prev) => !prev);
       } else {
-        throw new Error("no active track");
+        throw new Error("No active track");
       }
-      setTorchOn((prev) => !prev);
     } catch {
       alert("Flashlight isn't supported on this device/browser.");
     }
@@ -197,7 +227,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     };
   }, []);
 
-  // ─── Profile comparison (reads from ref, not state) ──────────────────────
+  // ─── Profile comparison ──────────────────────────────────────────────────
   const normalizeString = useCallback(
     (str: string): string => str.toLowerCase().trim().replace(/\s+/g, " "),
     [],
@@ -363,7 +393,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     [compareWithProfile, submitVerification],
   );
 
-  // ─── Native BarcodeDetector loop (same engine the OS camera app uses) ───
+  // ─── Native BarcodeDetector loop ────────────────────────────────────────
   const runNativeDetectionLoop = useCallback(async () => {
     scanningActiveRef.current = true;
     while (scanningActiveRef.current) {
@@ -396,57 +426,89 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           return;
         }
       } catch {
-        // per-frame detection errors are normal — ignore and keep looping
+        // Per-frame detection errors are normal — ignore and keep looping
       }
       await sleep(150);
     }
   }, [stopScanner, parseSAIDBarcode, runVerification]);
 
-  // ─── Fallback scanner (JS decoder, for browsers without native support) ─
-  const startFallbackScanner = useCallback(async () => {
+  // ─── ZXing scanner (replaces html5-qrcode) ─────────────────────────────
+  const startZXingScanner = useCallback(async () => {
     try {
-      const scanner = new Html5Qrcode(CONTAINER_ID, {
-        formatsToSupport: [Html5QrcodeSupportedFormats.PDF_417],
-        verbose: false,
-      });
-      scannerRef.current = scanner;
+      if (!window.ZXing) {
+        throw new Error("ZXing library not loaded");
+      }
 
-      await scanner.start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: qrboxFunction },
-        async (decodedText) => {
-          if (!scannerRef.current) return;
-          await stopScanner();
+      const { BrowserMultiFormatReader, DecodeHintType, BarcodeFormat } =
+        window.ZXing;
+      const reader = new BrowserMultiFormatReader();
+      zxingReaderRef.current = reader;
 
-          const parsed = parseSAIDBarcode(decodedText);
-          if (!parsed.idNumber || parsed.idNumber.length !== 13) {
-            const tryManual = window.confirm(
-              `Could not extract a valid 13-digit ID number.\n\n` +
-                `Raw data: ${decodedText.substring(0, 100)}\n\n` +
-                `Enter ID manually?`,
-            );
-            setStep(tryManual ? "manual" : "scanning");
-            return;
+      // Configure hints for PDF417
+      const hints = new Map();
+      hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.PDF_417]);
+      hints.set(DecodeHintType.TRY_HARDER, true);
+
+      // Create video element
+      const videoElement = document.createElement("video");
+      videoElement.style.width = "100%";
+      videoElement.style.height = "100%";
+      videoElement.style.objectFit = "cover";
+      videoElement.setAttribute("playsInline", "true");
+      videoElement.setAttribute("muted", "true");
+      videoElement.setAttribute("autoplay", "true");
+
+      if (zxingContainerRef.current) {
+        zxingContainerRef.current.innerHTML = "";
+        zxingContainerRef.current.appendChild(videoElement);
+      }
+
+      // Start decoding
+      await reader.decodeFromVideoElement(
+        videoElement,
+        (result: any, error: any) => {
+          if (result && scanningActiveRef.current) {
+            const raw = result.getText();
+            scanningActiveRef.current = false;
+
+            // Stop the scanner
+            if (zxingReaderRef.current) {
+              zxingReaderRef.current.stop();
+            }
+
+            const parsed = parseSAIDBarcode(raw);
+            if (!parsed.idNumber || parsed.idNumber.length !== 13) {
+              const tryManual = window.confirm(
+                `Could not extract a valid 13-digit ID number.\n\n` +
+                  `Raw data: ${raw.substring(0, 100)}\n\n` +
+                  `Enter ID manually?`,
+              );
+              setStep(tryManual ? "manual" : "scanning");
+              return;
+            }
+            runVerification(parsed);
           }
-          await runVerification(parsed);
         },
-        () => {
-          // per-frame decode failures are normal — ignore
-        },
+        hints,
       );
 
-      try {
-        const caps = scanner.getRunningTrackCapabilities() as any;
-        setTorchSupported(!!caps?.torch);
-      } catch {
-        setTorchSupported(false);
+      // Get stream for torch support
+      if (videoElement.srcObject) {
+        streamRef.current = videoElement.srcObject as MediaStream;
+        try {
+          const track = streamRef.current.getVideoTracks()[0];
+          const caps = track.getCapabilities?.() as any;
+          setTorchSupported(!!caps?.torch);
+        } catch {
+          setTorchSupported(false);
+        }
       }
     } catch (err: any) {
-      console.error("Fallback scanner start error:", err);
+      console.error("ZXing scanner start error:", err);
       setCameraError("Unable to start the camera. " + (err?.message || ""));
       setStep("permission-denied");
     }
-  }, [stopScanner, parseSAIDBarcode, runVerification]);
+  }, [parseSAIDBarcode, runVerification]);
 
   // ─── Start scanner: try native OS-level detection first ─────────────────
   const startScanner = useCallback(async () => {
@@ -466,19 +528,18 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     }
 
     const nativeOk = await isNativeDetectorSupported();
-    scanModeRef.current = nativeOk ? "native" : "fallback";
-    setScanMode(nativeOk ? "native" : "fallback");
+    scanModeRef.current = nativeOk ? "native" : "zxing";
+    setScanMode(nativeOk ? "native" : "zxing");
 
     if (nativeOk) {
       streamRef.current = stream;
-      // give the video element a tick to mount before attaching the stream
       await sleep(0);
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         try {
           await videoRef.current.play();
         } catch {
-          // some browsers need a user gesture; ignore, detection still runs once playing
+          // Some browsers need a user gesture; ignore
         }
       }
       try {
@@ -497,14 +558,14 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
       }
       runNativeDetectionLoop();
     } else {
-      // this permission-check stream isn't needed — html5-qrcode opens its own
+      // Use ZXing instead of html5-qrcode
       stream.getTracks().forEach((t) => t.stop());
       await sleep(0);
-      await startFallbackScanner();
+      await startZXingScanner();
     }
-  }, [stopScanner, runNativeDetectionLoop, startFallbackScanner]);
+  }, [stopScanner, runNativeDetectionLoop, startZXingScanner]);
 
-  // ─── Photo fallback: decode a still image, no framing needed ────────────
+  // ─── Photo fallback: decode a still image ──────────────────────────────
   const handlePhotoSelected = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
@@ -537,23 +598,18 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
             return;
           }
           await runVerification(parsed);
-        } else {
-          // JS decoder fallback for photo
-          let tempDiv = document.getElementById(FILE_SCAN_CONTAINER_ID);
-          if (!tempDiv) {
-            tempDiv = document.createElement("div");
-            tempDiv.id = FILE_SCAN_CONTAINER_ID;
-            tempDiv.style.display = "none";
-            document.body.appendChild(tempDiv);
-          }
-          const fileScanner = new Html5Qrcode(FILE_SCAN_CONTAINER_ID, {
-            formatsToSupport: [Html5QrcodeSupportedFormats.PDF_417],
-            verbose: false,
-          });
-          const decodedText = await fileScanner.scanFile(file, false);
-          fileScanner.clear();
+        } else if (window.ZXing) {
+          // Use ZXing for photo decoding
+          const { BrowserMultiFormatReader, DecodeHintType, BarcodeFormat } =
+            window.ZXing;
+          const reader = new BrowserMultiFormatReader();
+          const hints = new Map();
+          hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.PDF_417]);
+          hints.set(DecodeHintType.TRY_HARDER, true);
 
-          const parsed = parseSAIDBarcode(decodedText);
+          const result = await reader.decodeFromImageFile(file, hints);
+          const parsed = parseSAIDBarcode(result.getText());
+
           if (!parsed.idNumber || parsed.idNumber.length !== 13) {
             alert(
               `Could not extract a valid 13-digit ID number from that photo.\n\n` +
@@ -563,6 +619,8 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
             return;
           }
           await runVerification(parsed);
+        } else {
+          throw new Error("No barcode detection available");
         }
       } catch {
         alert(
@@ -615,7 +673,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           }
         }
       } catch {
-        // non-fatal
+        // Non-fatal
       }
       if (!cancelled) setStep("scanning");
     })();
@@ -637,8 +695,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   useEffect(() => {
     return () => {
       stopScanner();
-      const tempDiv = document.getElementById(FILE_SCAN_CONTAINER_ID);
-      if (tempDiv) tempDiv.remove();
     };
   }, [stopScanner]);
 
@@ -827,8 +883,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         )}
       </div>
 
-      {/* Both mounts always exist so refs are ready regardless of which
-          mode gets chosen; only the active one is visible. */}
+      {/* Native detector video element */}
       <video
         ref={videoRef}
         playsInline
@@ -841,14 +896,16 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           display: scanMode === "native" ? "block" : "none",
         }}
       />
+
+      {/* ZXing container (replaces html5-qrcode) */}
       <div
-        id={CONTAINER_ID}
+        ref={zxingContainerRef}
         style={{
           width: "100%",
           height: "calc(100vh - 60px)",
           position: "relative",
           overflow: "hidden",
-          display: scanMode === "fallback" ? "block" : "none",
+          display: scanMode === "zxing" ? "block" : "none",
         }}
       />
 
