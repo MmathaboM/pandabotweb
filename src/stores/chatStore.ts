@@ -1,4 +1,4 @@
-// useChatStore.ts - WITH PROPER THROTTLING
+
 import { create } from "zustand";
 import { Conversation, Message } from "../types/chat";
 import { chatService } from "../services/chatService";
@@ -25,6 +25,7 @@ interface ChatState {
     optimisticReplyTo?: Message,
     attachment?: string,
   ) => Promise<void>;
+  sendBotReply: (body: string) => Promise<void>;
   createConversation: (
     type: "direct" | "group",
     memberIds: number[],
@@ -59,7 +60,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const conversations = await chatService.getConversations();
       set({ conversations, loading: false });
     } catch (e: any) {
-      // Silent fail for 429 errors
       if (e.message?.includes("429")) {
         console.warn("Rate limited, skipping conversations fetch");
         return;
@@ -72,10 +72,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { _convPollTimer, fetchConversations } = get();
     if (_convPollTimer) return;
 
-    // Initial fetch
     fetchConversations();
 
-    // Poll every 10 seconds instead of 5
     const timer = setInterval(() => {
       fetchConversations();
     }, 10000);
@@ -110,7 +108,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ error: e.message, loading: false });
     }
 
-    // Start polling with delays
     setTimeout(() => {
       get().startMessagePolling();
       get().startTypingPoll();
@@ -133,7 +130,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { _msgPollTimer } = get();
     if (_msgPollTimer) return;
 
-    // Poll every 5 seconds instead of 3
     const timer = setInterval(async () => {
       const { activeConversation, messages, _isPolling } = get();
       if (!activeConversation || _isPolling) return;
@@ -142,14 +138,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       try {
         const fresh = await chatService.getMessages(activeConversation.id);
 
-        // Only update if there are new messages
         if (fresh.length !== messages.length) {
           set({ messages: fresh, _lastMessageCount: fresh.length });
           await chatService.markRead(activeConversation.id);
           get().fetchConversations();
         }
       } catch (e: any) {
-        // Silent fail for 429
         if (e.message?.includes("429")) {
           console.warn("Rate limited, skipping messages poll");
         }
@@ -202,14 +196,40 @@ export const useChatStore = create<ChatState>((set, get) => ({
         realMessage.reply_to_id = replyToId;
       }
 
-      set({
-        messages: messages.map((m) => (m.id === tempId ? realMessage : m)),
-      });
+      set((state) => ({
+        messages: state.messages.map((m) =>
+          m.id === tempId ? realMessage : m,
+        ),
+      }));
       get().fetchConversations();
     } catch (e: any) {
-      set({ messages: messages.filter((m) => m.id !== tempId) });
+      set((state) => ({
+        messages: state.messages.filter((m) => m.id !== tempId),
+      }));
       set({ error: e.message });
       throw e;
+    }
+  },
+
+  // Sends an automated reply as the support bot (correct sender_id from backend),
+  // so it renders on the left like a real support message rather than being
+  // attributed to the logged-in user.
+  sendBotReply: async (body: string) => {
+    const { activeConversation } = get();
+    if (!activeConversation) return;
+
+    try {
+      const botMessage = await chatService.sendBotReply(
+        activeConversation.id,
+        body,
+      );
+      set((state) => ({
+        messages: [...state.messages, botMessage],
+      }));
+      get().fetchConversations();
+    } catch (e: any) {
+      console.error("Bot reply failed:", e);
+      set({ error: e.message });
     }
   },
 
@@ -271,7 +291,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { _typingPollTimer } = get();
     if (_typingPollTimer) return;
 
-    // Poll every 4 seconds instead of 2
     const timer = setInterval(async () => {
       const { activeConversation } = get();
       if (!activeConversation) return;

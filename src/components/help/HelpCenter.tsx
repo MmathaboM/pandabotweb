@@ -26,6 +26,7 @@ interface FaqItem {
 const MANUAL_URL =
   "https://crm.skillspanda.co.za/videos/guides/pandaBot_User_Manual.pdf";
 const SUPPORT_AGENT_ID = 547;
+const BOTTOM_NAV_HEIGHT = 35;
 
 const FAQ_ITEMS: FaqItem[] = [
   {
@@ -127,13 +128,6 @@ const IconUser = ({ color }: { color: string }) => (
   </svg>
 );
 
-const IconBot = ({ color }: { color: string }) => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-  </svg>
-);
-
 // ─── Components ──────────────────────────────────────────────────────────────
 const HelpItem: React.FC<HelpItemProps> = ({ icon, iconColor, title, description, onClick }) => (
   <button className="help-item" onClick={onClick}>
@@ -147,13 +141,15 @@ const HelpItem: React.FC<HelpItemProps> = ({ icon, iconColor, title, description
 );
 
 // ─── Message Bubble ──────────────────────────────────────────────────────────
-const MessageBubble: React.FC<{ message: Message; currentUserId: number }> = ({ 
-  message, 
-  currentUserId 
-}) => {
-  const isUser = message.sender_id === currentUserId;
+// NOTE: isUser is derived from SUPPORT_AGENT_ID rather than currentUserId.
+// This is a 1:1 support conversation, so anything NOT from the support agent
+// is guaranteed to be the current user — this avoids misalignment caused by
+// currentUserId being 0/unset when localStorage hasn't loaded yet, or the
+// stored user shape not matching sender_id's type.
+const MessageBubble: React.FC<{ message: Message }> = ({ message }) => {
   const isBot = message.sender_id === SUPPORT_AGENT_ID && message.body?.includes('🤖');
   const isSupport = message.sender_id === SUPPORT_AGENT_ID && !isBot;
+  const isUser = !isSupport && !isBot;
 
   return (
     <div className={`message-bubble ${isUser ? "user" : "support"}`}>
@@ -161,7 +157,7 @@ const MessageBubble: React.FC<{ message: Message; currentUserId: number }> = ({
         {isUser ? (
           <div className="avatar-user"><IconUser color="#FFFFFF" /></div>
         ) : isBot ? (
-          <div className="avatar-bot"><IconBot color="#FFFFFF" /></div>
+          <div className="avatar-bot">🤖</div>
         ) : (
           <div className="avatar-support">🐼</div>
         )}
@@ -229,7 +225,6 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
   const [activeTab, setActiveTab] = useState<"faq" | "chat">("faq");
   const [inputMessage, setInputMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
-  const [currentUserId, setCurrentUserId] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isBotTyping, setIsBotTyping] = useState(false);
@@ -245,6 +240,7 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
     createConversation,
     startPolling,
     stopPolling,
+    sendBotReply,
     startMessagePolling,
     stopMessagePolling,
     typingUsers,
@@ -252,23 +248,10 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
 
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  
+
   // ─── Track which messages got auto-response ──────────────────────────────
   const respondedMessages = useRef<Set<number>>(new Set());
   const autoResponseTimer = useRef<NodeJS.Timeout | null>(null);
-
-  // ─── Get current user ──────────────────────────────────────────────────────
-  useEffect(() => {
-    try {
-      const userStr = localStorage.getItem('user');
-      if (userStr) {
-        const user = JSON.parse(userStr);
-        setCurrentUserId(user.id || 0);
-      }
-    } catch (e) {
-      console.error('Error getting user:', e);
-    }
-  }, []);
 
   // ─── Load conversation ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -277,7 +260,7 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
         setLoading(true);
         if (conversations.length === 0) await fetchConversations();
 
-        let supportConv = conversations.find((c: Conversation) => 
+        let supportConv = conversations.find((c: Conversation) =>
           c.type === "direct" && c.members.some((m) => m.id === SUPPORT_AGENT_ID)
         );
 
@@ -315,16 +298,12 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
     if (messages.length === 0 || !activeConversation) return;
 
     const lastMsg = messages[messages.length - 1];
-    
-    // Skip if:
-    // - Already responded to this message
-    // - Message is from support/bot
-    // - There's already a bot response after it
+
     if (respondedMessages.current.has(lastMsg.id)) return;
     if (lastMsg.sender_id === SUPPORT_AGENT_ID) return;
-    
-    const hasBotResponseAfter = messages.some(m => 
-      m.sender_id === SUPPORT_AGENT_ID && 
+
+    const hasBotResponseAfter = messages.some(m =>
+      m.sender_id === SUPPORT_AGENT_ID &&
       m.created_at > lastMsg.created_at
     );
     if (hasBotResponseAfter) {
@@ -332,33 +311,28 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
       return;
     }
 
-    // Mark as responded immediately (prevent duplicates)
     respondedMessages.current.add(lastMsg.id);
 
-    // Find matching response
     const body = lastMsg.body || "";
-    const match = AUTO_RESPONSES.find(r => 
+    const match = AUTO_RESPONSES.find(r =>
       r.keywords.some(k => body.toLowerCase().includes(k))
     );
 
-    // Show typing indicator
     setIsBotTyping(true);
 
-    // Clear any existing timer
     if (autoResponseTimer.current) {
       clearTimeout(autoResponseTimer.current);
       autoResponseTimer.current = null;
     }
 
-    // Send response after delay
     const delay = match ? 1500 : 2500;
     autoResponseTimer.current = setTimeout(async () => {
       try {
-        const response = match 
-          ? match.response 
+        const response = match
+          ? match.response
           : "🤖 Thanks for your message! Our support team will respond shortly.\n\n💡 In the meantime, check our FAQ section for quick answers.";
-        
-        await sendMessage(response);
+
+        await sendBotReply(response);
       } catch (err) {
         console.error("Error sending auto-response:", err);
       } finally {
@@ -436,7 +410,7 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
   };
 
   const handleOpenManualExternal = () => window.open(MANUAL_URL, "_blank");
-  
+
   const handleDownloadManual = () => {
     const a = document.createElement("a");
     a.href = MANUAL_URL;
@@ -445,7 +419,6 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
     a.click();
   };
 
-  // ─── Check if input should be disabled ────────────────────────────────────
   const isInputDisabled = isSending;
 
   return (
@@ -459,12 +432,12 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
           top: 0;
           left: 0;
           width: 100%;
-          height: 100dvh;
+          height: calc(100dvh - ${BOTTOM_NAV_HEIGHT}px);
           background: #F8F9FA;
           display: flex;
           flex-direction: column;
           overflow: hidden;
-          z-index: 1000;
+          z-index: 999; 
         }
 
         .hc-content {
@@ -654,9 +627,10 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
         }
         .avatar-user { background: #5784E8; }
         .avatar-support { background: #FFF5EB; font-size: 18px; }
-        .avatar-bot { background: #fb8500; font-size: 16px; }
+        .avatar-bot { background: #fb8500; font-size: 16px; display: flex; align-items: center; justify-content: center; }
 
         .message-content { display: flex; flex-direction: column; gap: 2px; max-width: 100%; }
+        .message-bubble.user .message-content { align-items: flex-end; }
         .message-sender { font-size: 11px; font-weight: 600; color: #9AA5B1; padding: 0 4px; }
         .message-text {
           padding: 10px 14px;
@@ -708,11 +682,11 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
           width: 100%;
           margin: 0 auto;
           background: #F8F9FA;
-          padding: 12px 20px 16px 20px;
+          padding: 12px 20px calc(16px + env(safe-area-inset-bottom, 0px) + ${BOTTOM_NAV_HEIGHT}px) 20px;
           border-top: 1px solid #E4E7EB;
           position: sticky;
           bottom: 0;
-          z-index: 10;
+          z-index: 10000;
         }
         .chat-input-area {
           display: flex;
@@ -769,7 +743,7 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
         .modal-backdrop {
           position: fixed; inset: 0;
           background: rgba(0,0,0,0.5);
-          z-index: 100;
+          z-index: 10001;
           display: flex;
           align-items: flex-end;
           justify-content: center;
@@ -808,7 +782,7 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
           .hc-scroll { padding: 16px 16px 0 16px; }
           .pdf-wrap { height: 300px; }
           .chat-messages { max-height: 45vh; min-height: 200px; }
-          .chat-input-wrapper { padding: 8px 12px 12px 12px; }
+          .chat-input-wrapper { padding: 8px 12px calc(12px + env(safe-area-inset-bottom, 0px) + ${BOTTOM_NAV_HEIGHT}px) 12px; }
         }
       `}</style>
 
@@ -816,14 +790,23 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
         <PageHeader title="Help Center" onBack={handleBack} />
 
         <div className="hc-tabs">
-          <button className={`hc-tab ${activeTab === "faq" ? "active" : ""}`} onClick={() => setActiveTab("faq")}>
+          <button
+            className={`hc-tab ${activeTab === "faq" ? "active" : ""}`}
+            onClick={() => setActiveTab("faq")}
+          >
             📚 FAQ
           </button>
-          <button className={`hc-tab ${activeTab === "chat" ? "active" : ""}`} onClick={() => setActiveTab("chat")}>
+          <button
+            className={`hc-tab ${activeTab === "chat" ? "active" : ""}`}
+            onClick={() => setActiveTab("chat")}
+          >
             💬 Support Chat
-            {activeConversation?.unread_count && activeConversation.unread_count > 0 && (
-              <span className="hc-tab-badge">{activeConversation.unread_count}</span>
-            )}
+            {activeConversation?.unread_count &&
+              activeConversation.unread_count > 0 && (
+                <span className="hc-tab-badge">
+                  {activeConversation.unread_count}
+                </span>
+              )}
           </button>
         </div>
 
@@ -831,7 +814,10 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
           <div className="hc-scroll">
             {activeTab === "faq" && (
               <>
-                <p className="hc-intro">Find answers to common questions or chat with our support team.</p>
+                <p className="hc-intro">
+                  Find answers to common questions or chat with our support
+                  team.
+                </p>
                 <section className="hc-section">
                   <p className="hc-section-title">Quick Actions</p>
                   <div className="hc-card">
@@ -840,7 +826,10 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
                       iconColor="#00CD50"
                       title="User Guide"
                       description="Open the PandaBot user manual (PDF)"
-                      onClick={() => { setManualVisible(true); setPdfLoading(true); }}
+                      onClick={() => {
+                        setManualVisible(true);
+                        setPdfLoading(true);
+                      }}
                     />
                     <div className="hc-divider" />
                     <HelpItem
@@ -867,12 +856,22 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
                     {FAQ_ITEMS.map((item, i) => (
                       <div key={i} className="faq-item">
                         {i > 0 && <div className="hc-divider" />}
-                        <button className="faq-trigger" onClick={() => toggleFaq(i)} aria-expanded={expandedFaq === i}>
+                        <button
+                          className="faq-trigger"
+                          onClick={() => toggleFaq(i)}
+                          aria-expanded={expandedFaq === i}
+                        >
                           <IconHelp color="#fb8500" />
                           <span className="faq-question">{item.question}</span>
-                          {expandedFaq === i ? <IconChevronUp color="#9AA5B1" /> : <IconChevronDown color="#9AA5B1" />}
+                          {expandedFaq === i ? (
+                            <IconChevronUp color="#9AA5B1" />
+                          ) : (
+                            <IconChevronDown color="#9AA5B1" />
+                          )}
                         </button>
-                        {expandedFaq === i && <p className="faq-answer">{item.answer}</p>}
+                        {expandedFaq === i && (
+                          <p className="faq-answer">{item.answer}</p>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -884,11 +883,19 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
               <div className="chat-wrapper">
                 <div className="chat-container">
                   {loading ? (
-                    <div className="loading-state"><div className="spinner" /><p>Loading conversation...</p></div>
+                    <div className="loading-state">
+                      <div className="spinner" />
+                      <p>Loading conversation...</p>
+                    </div>
                   ) : error ? (
                     <div className="error-state">
                       <p>❌ {error}</p>
-                      <button className="retry-btn" onClick={() => window.location.reload()}>Retry</button>
+                      <button
+                        className="retry-btn"
+                        onClick={() => window.location.reload()}
+                      >
+                        Retry
+                      </button>
                     </div>
                   ) : (
                     <>
@@ -902,15 +909,19 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
 
                       <div className="chat-messages" ref={chatContainerRef}>
                         {messages.length === 0 ? (
-                          <div className="empty-state"><p>No messages yet. Start a conversation!</p></div>
+                          <div className="empty-state">
+                            <p>No messages yet. Start a conversation!</p>
+                          </div>
                         ) : (
                           messages.map((msg) => (
-                            <MessageBubble key={msg.id} message={msg} currentUserId={currentUserId} />
+                            <MessageBubble key={msg.id} message={msg} />
                           ))
                         )}
                       </div>
 
-                      <div className="typing-indicator-container">{getTypingText()}</div>
+                      <div className="typing-indicator-container">
+                        {getTypingText()}
+                      </div>
 
                       <div className="quick-replies">
                         {QUICK_REPLIES.map((reply, idx) => (
@@ -960,14 +971,27 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
         </div>
 
         {manualVisible && (
-          <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setManualVisible(false); }}>
+          <div
+            className="modal-backdrop"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setManualVisible(false);
+            }}
+          >
             <div className="modal-sheet">
               <div className="modal-header">
                 <span className="modal-title">PandaBot User Manual</span>
-                <button className="modal-close-btn" onClick={() => setManualVisible(false)}><IconX color="#1F2933" /></button>
+                <button
+                  className="modal-close-btn"
+                  onClick={() => setManualVisible(false)}
+                >
+                  <IconX color="#1F2933" />
+                </button>
               </div>
               <div className="pdf-wrap">
-                <iframe src={`https://drive.google.com/viewerng/viewer?embedded=true&url=${encodeURIComponent(MANUAL_URL)}`} onLoad={() => setPdfLoading(false)} />
+                <iframe
+                  src={`https://drive.google.com/viewerng/viewer?embedded=true&url=${encodeURIComponent(MANUAL_URL)}`}
+                  onLoad={() => setPdfLoading(false)}
+                />
                 {pdfLoading && (
                   <div className="pdf-loading">
                     <div className="spinner" />
@@ -976,10 +1000,22 @@ const HelpCenter: React.FC<HelpCenterProps> = ({ onClose, onBack }) => {
                 )}
               </div>
               <div className="modal-actions">
-                <button className="action-btn btn-secondary" onClick={handleOpenManualExternal}><IconExternalLink color="#1F2933" /> Open Link</button>
-                <button className="action-btn btn-primary" onClick={handleDownloadManual}><IconDownload color="#FFFFFF" /> Download</button>
+                <button
+                  className="action-btn btn-secondary"
+                  onClick={handleOpenManualExternal}
+                >
+                  <IconExternalLink color="#1F2933" /> Open Link
+                </button>
+                <button
+                  className="action-btn btn-primary"
+                  onClick={handleDownloadManual}
+                >
+                  <IconDownload color="#FFFFFF" /> Download
+                </button>
               </div>
-              <p className="modal-hint">If the manual doesn't display, tap "Open Link".</p>
+              <p className="modal-hint">
+                If the manual doesn't display, tap "Open Link".
+              </p>
             </div>
           </div>
         )}

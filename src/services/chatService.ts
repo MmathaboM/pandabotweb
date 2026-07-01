@@ -132,4 +132,24 @@ export const chatService = {
       headers: getHeaders(),
     });
   },
+
+  sendBotReply: async (
+    conversationId: number,
+    body: string,
+  ): Promise<Message> => {
+    const res = await fetch(
+      `${BASE_URL}/conversations/${conversationId}/bot-reply`,
+      {
+        method: "POST",
+        headers: getHeaders(),
+        body: JSON.stringify({ body }),
+      },
+    );
+    if (!res.ok) {
+      const errorText = await res.text();
+      console.error("Bot reply API Error:", errorText);
+      throw new Error(`Failed to send bot reply: ${res.status}`);
+    }
+    return res.json();
+  },
 };
