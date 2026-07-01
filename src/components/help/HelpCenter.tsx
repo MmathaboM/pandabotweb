@@ -182,10 +182,10 @@ const AUTO_RESPONSES: { keywords: string[]; response: string }[] = [
     keywords: ["schedule", "timetable", "session", "class time"],
     response: "🤖 **To view your schedule:**\n\n1. Go to **Academy** > **Schedules**\n2. See all upcoming training sessions\n3. Tap any session for full details (venue, facilitator, time)",
   },
-  {
-    keywords: ["check in", "checkin", "attendance", "arrive", "present", "location", "gps"],
-    response: "🤖 **To check in for training:**\n\n1. Navigate to **Academy** tab\n2. Tap **Check In**\n3. Ensure GPS is enabled\n4. You must be within 200m of the venue\n5. Check-in opens 15 minutes before class starts",
-  },
+  // {
+  //   keywords: ["check in", "checkin", "attendance", "arrive", "present", "location", "gps"],
+  //   response: "🤖 **To check in for training:**\n\n1. Navigate to **Academy** tab\n2. Tap **Check In**\n3. Ensure GPS is enabled\n4. You must be within 200m of the venue\n5. Check-in opens 15 minutes before class starts",
+  // },
   {
     keywords: ["course", "courses", "learning", "lms", "study", "portal", "access"],
     response: "🤖 **To access your courses:**\n\n1. Go to **Academy**\n2. Tap **Learning Portal**\n3. Use your app email and password to login",
@@ -209,7 +209,7 @@ const AUTO_RESPONSES: { keywords: string[]; response: string }[] = [
 ];
 
 const QUICK_REPLIES = [
-  { label: "📍 Check-in", text: "How do I check in?" },
+  // { label: "📍 Check-in", text: "How do I check in?" },
   { label: "📅 Schedule", text: "How do I view my schedule?" },
   { label: "🎓 Courses", text: "How do I access my courses?" },
   { label: "💰 Payment", text: "When do I get paid?" },
