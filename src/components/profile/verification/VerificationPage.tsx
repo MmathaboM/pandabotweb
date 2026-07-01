@@ -556,13 +556,13 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
             Try again
           </button>
           <button
-            style={{ ...s.btnSecondary, marginTop: 10 }}
+            style={{ ...s.btnSecondary, marginTop: 0 , marginBottom: 20, }}
             onClick={() => fileInputRef.current?.click()}
           >
             Take a photo instead
           </button>
           <button
-            style={{ ...s.btnSecondary, marginTop: 10 }}
+            style={{ ...s.btnSecondary, marginTop: 0 }}
             onClick={() => setStep("manual")}
           >
             Enter ID manually
