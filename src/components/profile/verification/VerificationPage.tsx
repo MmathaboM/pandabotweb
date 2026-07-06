@@ -1,13 +1,14 @@
-
+// VerifyIDPage.tsx
+//
+// NOTE: requires the `@zxing/library` package:
+//   npm install @zxing/library
+//
+// We use a pure-JS decoder (ZXing) instead of the native BarcodeDetector API
+// because BarcodeDetector isn't implemented in Safari/iOS at all, and its
+// PDF417 support is inconsistent across Android browsers too. ZXing decodes
+// entirely in JS so behaviour is identical on iOS, Android, and desktop.
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import {
-  X,
-  RefreshCw,
-  Camera,
-  ImagePlus,
-  Shield,
-  ShieldCheck,
-} from "lucide-react";
+import { X, RefreshCw, ImagePlus, Shield, ShieldCheck } from "lucide-react";
 import {
   BrowserMultiFormatReader,
   BarcodeFormat,
@@ -32,7 +33,7 @@ interface ParsedID {
   citizenship: string;
 }
 
-type VerifyStep = "loading" | "upload" | "processing" | "manual" | "result";
+type VerifyStep = "loading" | "upload" | "processing" | "result";
 
 // ─── Robust barcode detection helpers ────────────────────────────────────
 // The uploaded photo may have the barcode at any rotation and anywhere in
@@ -120,8 +121,6 @@ async function detectBarcodeFromFile(
 export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   const [step, setStep] = useState<VerifyStep>("loading");
   const [userProfile, setUserProfile] = useState<any>(null);
-  const [idNumber, setIdNumber] = useState("");
-  const [confirmIdNumber, setConfirmIdNumber] = useState("");
   const [statusMsg, setStatusMsg] = useState("Reading barcode from photo…");
   const [isProcessing, setIsProcessing] = useState(false);
   const [scanResult, setScanResult] = useState<ParsedID | null>(null);
@@ -130,7 +129,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   const userProfileRef = useRef<any>(null);
-  const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -376,13 +374,12 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         const rawData = await detectBarcodeFromFile(file, setStatusMsg);
 
         if (!rawData) {
-          const tryManual = window.confirm(
+          alert(
             "Couldn't find a barcode in that photo.\n\n" +
               "Make sure the barcode on the back of your ID is visible somewhere in the shot " +
-              "and try a clearer or better-lit photo.\n\n" +
-              "Enter the ID number manually instead?",
+              "and try a clearer or better-lit photo.",
           );
-          setStep(tryManual ? "manual" : "upload");
+          setStep("upload");
           return;
         }
 
@@ -391,11 +388,10 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           setScanResult(parsed);
           await runVerification(parsed);
         } else {
-          const tryManual = window.confirm(
-            "Could not extract a valid 13-digit ID number from that photo.\n\n" +
-              "Would you like to enter the ID manually?",
+          alert(
+            "Could not extract a valid 13-digit ID number from that photo. Please try another photo.",
           );
-          setStep(tryManual ? "manual" : "upload");
+          setStep("upload");
         }
       } catch (error: any) {
         alert(
@@ -409,30 +405,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     },
     [previewUrl, parseSAIDBarcode, runVerification],
   );
-
-  // ─── Manual Entry ────────────────────────────────────────────────────
-  const handleManualVerify = useCallback(async () => {
-    const id = idNumber.trim();
-    if (!/^\d{13}$/.test(id)) {
-      alert("Enter a valid 13-digit SA ID number.");
-      return;
-    }
-    if (id !== confirmIdNumber.trim()) {
-      alert("ID numbers do not match.");
-      return;
-    }
-    await runVerification({
-      idNumber: id,
-      surname: "",
-      fullNames: "",
-      first_name: "",
-      middle_names: "",
-      last_name: "",
-      date_of_birth: "",
-      gender: "",
-      citizenship: "",
-    });
-  }, [idNumber, confirmIdNumber, runVerification]);
 
   // ─── Load Profile ────────────────────────────────────────────────────
   useEffect(() => {
@@ -492,37 +464,19 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           </div>
           <h2 style={styles.uploadTitle}>Photo of your ID barcode</h2>
           <p style={styles.uploadMsg}>
-            Take or choose a clear photo showing the barcode on the back of your
-            SA ID. It doesn't need to be perfectly lined up — any angle or
-            orientation works, as long as the barcode is visible in the shot.
+            Choose a clear photo showing the barcode on the back of your SA ID.
+            It doesn't need to be perfectly lined up — any angle or orientation
+            works, as long as the barcode is visible in the shot.
           </p>
 
-          {/* <button
-            style={styles.primaryButton}
-            onClick={() => cameraInputRef.current?.click()}
-          >
-            <Camera size={18} style={{ marginRight: 8 }} />
-            Take Photo
-          </button> */}
           <button
-            style={styles.secondaryButton}
+            style={styles.primaryButton}
             onClick={() => galleryInputRef.current?.click()}
           >
             <ImagePlus size={18} style={{ marginRight: 8 }} />
             Choose from Gallery
           </button>
-          {/* <button style={styles.textButton} onClick={() => setStep("manual")}>
-            Enter ID Number Manually
-          </button> */}
 
-          <input
-            ref={cameraInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            style={{ display: "none" }}
-            onChange={handlePhotoUpload}
-          />
           <input
             ref={galleryInputRef}
             type="file"
@@ -530,56 +484,6 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
             style={{ display: "none" }}
             onChange={handlePhotoUpload}
           />
-        </div>
-      </div>
-    );
-  }
-
-  // ─── Render: Manual Entry ────────────────────────────────────────────
-  if (step === "manual") {
-    return (
-      <div style={{ ...styles.root, background: "#fff" }}>
-        <div style={styles.manualContainer}>
-          <button style={styles.backButton} onClick={() => setStep("upload")}>
-            <X size={20} color="#fb8500" />
-            <span style={styles.backButtonText}>Back to Upload</span>
-          </button>
-
-          <h2 style={styles.manualTitle}>Enter ID Manually</h2>
-
-          <div style={styles.inputGroup}>
-            <label style={styles.label}>SA ID Number</label>
-            <input
-              style={styles.input}
-              type="text"
-              value={idNumber}
-              onChange={(e) =>
-                setIdNumber(e.target.value.replace(/\D/g, "").slice(0, 13))
-              }
-              placeholder="13-digit SA ID number"
-              maxLength={13}
-            />
-          </div>
-
-          <div style={styles.inputGroup}>
-            <label style={styles.label}>Confirm ID Number</label>
-            <input
-              style={styles.input}
-              type="text"
-              value={confirmIdNumber}
-              onChange={(e) =>
-                setConfirmIdNumber(
-                  e.target.value.replace(/\D/g, "").slice(0, 13),
-                )
-              }
-              placeholder="Re-enter ID number"
-              maxLength={13}
-            />
-          </div>
-
-          <button style={styles.primaryButton} onClick={handleManualVerify}>
-            Verify
-          </button>
         </div>
       </div>
     );
@@ -802,66 +706,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-  },
-  textButton: {
-    background: "none",
-    border: "none",
-    color: "#fb8500",
-    fontWeight: 600,
-    fontSize: 14,
-    cursor: "pointer",
-    marginTop: 18,
-    padding: 0,
-  },
-  manualContainer: {
-    padding: 24,
-    width: "100%",
-    maxWidth: 400,
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    justifyContent: "center",
-  },
-  backButton: {
-    background: "none",
-    border: "none",
-    color: "#fb8500",
-    fontWeight: 600,
-    fontSize: 14,
-    cursor: "pointer",
-    marginBottom: 20,
-    display: "flex",
-    alignItems: "center",
-    gap: 4,
-    padding: 0,
-  },
-  backButtonText: {
-    marginLeft: 4,
-  },
-  manualTitle: {
-    fontSize: 20,
-    fontWeight: 700,
-    marginBottom: 20,
-    color: "#1a1a2e",
-  },
-  inputGroup: {
-    marginBottom: 14,
-  },
-  label: {
-    display: "block",
-    fontWeight: 600,
-    fontSize: 13,
-    marginBottom: 4,
-    color: "#374151",
-  },
-  input: {
-    width: "100%",
-    padding: "10px 12px",
-    border: "2px solid #e5e7eb",
-    borderRadius: 8,
-    fontSize: 16,
-    outline: "none",
-    boxSizing: "border-box",
   },
   modalOverlay: {
     position: "fixed",
