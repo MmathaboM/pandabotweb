@@ -1,12 +1,4 @@
-// VerifyIDPage.tsx
-//
-// NOTE: requires the `@zxing/library` package:
-//   npm install @zxing/library
-//
-// We use a pure-JS decoder (ZXing) instead of the native BarcodeDetector API
-// because BarcodeDetector isn't implemented in Safari/iOS at all, and its
-// PDF417 support is inconsistent across Android browsers too. ZXing decodes
-// entirely in JS so behaviour is identical on iOS, Android, and desktop.
+
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   X,
@@ -505,13 +497,13 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
             orientation works, as long as the barcode is visible in the shot.
           </p>
 
-          <button
+          {/* <button
             style={styles.primaryButton}
             onClick={() => cameraInputRef.current?.click()}
           >
             <Camera size={18} style={{ marginRight: 8 }} />
             Take Photo
-          </button>
+          </button> */}
           <button
             style={styles.secondaryButton}
             onClick={() => galleryInputRef.current?.click()}
@@ -519,9 +511,9 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
             <ImagePlus size={18} style={{ marginRight: 8 }} />
             Choose from Gallery
           </button>
-          <button style={styles.textButton} onClick={() => setStep("manual")}>
+          {/* <button style={styles.textButton} onClick={() => setStep("manual")}>
             Enter ID Number Manually
-          </button>
+          </button> */}
 
           <input
             ref={cameraInputRef}
