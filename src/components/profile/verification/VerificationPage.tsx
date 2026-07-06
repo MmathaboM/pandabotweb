@@ -246,32 +246,62 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     [],
   );
 
-  const compareWithProfile = useCallback(
-    (parsed: ParsedID): { mismatches: string[] } => {
-      const profile = userProfileRef.current;
-      const mismatches: string[] = [];
+  // The API nests sa_id_number in a couple of different places depending on
+  // which endpoint populated the profile — check all of them.
+  const getProfileIdNumber = useCallback((profile: any): string | null => {
+    const raw =
+      profile?.sa_id_number ??
+      profile?.demographics?.sa_id_number ??
+      profile?.personal_info?.sa_id_number ??
+      null;
+    return raw ? String(raw).replace(/\D/g, "") : null;
+  }, []);
 
+  const compareWithProfile = useCallback(
+    (parsed: ParsedID): { blocking: string[]; warnings: string[] } => {
+      const profile = userProfileRef.current;
+      const blocking: string[] = [];
+      const warnings: string[] = [];
+
+      // ── ID number — the most important check. If the profile already has
+      // an ID number on file, the scanned ID MUST match it exactly. ──
+      const profileIdNumber = getProfileIdNumber(profile);
+      if (
+        profileIdNumber &&
+        parsed.idNumber &&
+        profileIdNumber !== parsed.idNumber
+      ) {
+        blocking.push(
+          `ID number does not match your profile (profile ends in ${profileIdNumber.slice(-4)}, scanned ID ends in ${parsed.idNumber.slice(-4)}).`,
+        );
+      }
+
+      // ── First name — must appear somewhere in the ID's full names. ──
       if (profile?.first_name && parsed.fullNames) {
         if (!nameMatchesAny(profile.first_name, parsed.fullNames)) {
-          mismatches.push(
-            `Name: profile has "${profile.first_name}" but it was not found on the ID`,
+          blocking.push(
+            `First name "${profile.first_name}" was not found on the scanned ID.`,
           );
         }
       }
+
+      // ── Surname — must match exactly. ──
       if (profile?.last_name && parsed.surname) {
         if (
           normalizeString(profile.last_name) !== normalizeString(parsed.surname)
         ) {
-          mismatches.push(
-            `Surname: profile has "${profile.last_name}", ID shows "${parsed.surname}"`,
+          blocking.push(
+            `Surname "${profile.last_name}" does not match the ID's surname "${parsed.surname}".`,
           );
         }
       }
+
+      // ── Softer checks — shown as a warning, but don't block verification. ──
       if (profile?.demographics?.date_of_birth && parsed.date_of_birth) {
         if (
           !datesMatch(profile.demographics.date_of_birth, parsed.date_of_birth)
         ) {
-          mismatches.push(
+          warnings.push(
             `Date of birth: profile shows ${profile.demographics.date_of_birth}, ID shows ${parsed.date_of_birth}`,
           );
         }
@@ -279,16 +309,16 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
       if (profile?.demographics?.gender_id && parsed.gender) {
         const genderMap: Record<string, number> = { male: 1, female: 2 };
         const expected = genderMap[parsed.gender.toLowerCase()];
-        if (profile.demographics.gender_id !== expected) {
-          mismatches.push(
-            `Gender: profile shows ID ${profile.demographics.gender_id}, ID shows ${parsed.gender}`,
+        if (expected && profile.demographics.gender_id !== expected) {
+          warnings.push(
+            `Gender: profile shows a different gender than the ID.`,
           );
         }
       }
 
-      return { mismatches };
+      return { blocking, warnings };
     },
-    [nameMatchesAny, normalizeString, datesMatch],
+    [getProfileIdNumber, nameMatchesAny, normalizeString, datesMatch],
   );
 
   // ─── Submit to Backend ──────────────────────────────────────────────
@@ -325,7 +355,19 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           return;
         }
 
-        const { mismatches } = compareWithProfile(parsed);
+        const { blocking, warnings } = compareWithProfile(parsed);
+
+        // Hard stop — this ID doesn't belong to the logged-in user's profile.
+        if (blocking.length > 0) {
+          alert(
+            "This ID doesn't match your profile, so it can't be used to verify your account:\n\n" +
+              blocking.join("\n") +
+              "\n\nPlease scan your own South African ID and try again.",
+          );
+          setStep("upload");
+          setIsProcessing(false);
+          return;
+        }
 
         let confirmMsg = `ID Scanned\n\n`;
         confirmMsg += `ID Number: ${parsed.idNumber}\n`;
@@ -334,8 +376,8 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         if (parsed.date_of_birth)
           confirmMsg += `DOB: ${parsed.date_of_birth}\n`;
         if (parsed.gender) confirmMsg += `Gender: ${parsed.gender}\n`;
-        if (mismatches.length) {
-          confirmMsg += `\n⚠️ Mismatches with your profile:\n${mismatches.join("\n")}\n`;
+        if (warnings.length) {
+          confirmMsg += `\n⚠️ ${warnings.join("\n")}\n`;
         }
         confirmMsg += `\nProceed with verification?`;
 
