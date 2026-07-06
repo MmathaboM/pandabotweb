@@ -4,11 +4,9 @@ import {
   X,
   RefreshCw,
   Camera,
-  Image as ImageIcon,
+  ImagePlus,
   Shield,
   ShieldCheck,
-  Zap,
-  ZapOff,
 } from "lucide-react";
 import { authService } from "../../../services/authService";
 
@@ -28,122 +26,104 @@ interface ParsedID {
   citizenship: string;
 }
 
-type VerifyStep =
-  | "loading"
-  | "scanning"
-  | "permission-denied"
-  | "processing"
-  | "manual"
-  | "result";
+type VerifyStep = "loading" | "upload" | "processing" | "manual" | "result";
+
+// ─── Robust barcode detection helpers ────────────────────────────────────
+// The uploaded photo may have the barcode at any rotation and anywhere in
+// the frame, so we try several rotations and a couple of scales rather than
+// requiring the user to line the barcode up in a fixed box.
+
+const ROTATIONS = [0, 90, 180, 270] as const;
+const MAX_DIMENSIONS = [1800, 2600, 1100]; // try a normal, a larger, and a smaller render
+
+function drawRotatedCanvas(
+  bitmap: ImageBitmap,
+  degrees: number,
+  maxDim: number,
+): HTMLCanvasElement {
+  const { width, height } = bitmap;
+  const scale = Math.min(1, maxDim / Math.max(width, height));
+  const w = width * scale;
+  const h = height * scale;
+
+  const canvas = document.createElement("canvas");
+  const rotatedDims = degrees === 90 || degrees === 270;
+  canvas.width = rotatedDims ? h : w;
+  canvas.height = rotatedDims ? w : h;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return canvas;
+
+  // Mild grayscale/contrast boost — helps the detector pick out the
+  // barcode bars from busy ID-card backgrounds and uneven lighting.
+  (ctx as any).filter = "grayscale(1) contrast(1.35)";
+
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.rotate((degrees * Math.PI) / 180);
+  ctx.drawImage(bitmap, -w / 2, -h / 2, w, h);
+
+  return canvas;
+}
+
+/**
+ * Tries to find a PDF417 barcode anywhere in the given image file,
+ * regardless of how it's rotated or positioned in the frame.
+ * Returns the raw barcode string, or null if nothing was found.
+ */
+async function detectBarcodeFromFile(
+  file: File,
+  onProgress?: (message: string) => void,
+): Promise<string | null> {
+  const detector = new (window as any).BarcodeDetector({ formats: ["pdf417"] });
+  const bitmap = await createImageBitmap(file);
+
+  try {
+    for (const maxDim of MAX_DIMENSIONS) {
+      for (const degrees of ROTATIONS) {
+        onProgress?.(`Scanning photo… (${degrees}°)`);
+        const canvas = drawRotatedCanvas(bitmap, degrees, maxDim);
+        try {
+          const results = await detector.detect(canvas);
+          if (results && results.length > 0 && results[0].rawValue) {
+            return results[0].rawValue as string;
+          }
+        } catch {
+          // This attempt failed to decode — move on to the next
+          // rotation/scale combination rather than giving up.
+        }
+      }
+    }
+    return null;
+  } finally {
+    bitmap.close?.();
+  }
+}
 
 export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
   const [step, setStep] = useState<VerifyStep>("loading");
   const [userProfile, setUserProfile] = useState<any>(null);
   const [idNumber, setIdNumber] = useState("");
   const [confirmIdNumber, setConfirmIdNumber] = useState("");
-  const [cameraError, setCameraError] = useState<string | null>(null);
-  const [statusMsg, setStatusMsg] = useState(
-    "Point camera at the barcode on the back of your ID",
-  );
+  const [statusMsg, setStatusMsg] = useState("Reading barcode from photo…");
   const [isProcessing, setIsProcessing] = useState(false);
   const [scanResult, setScanResult] = useState<ParsedID | null>(null);
   const [verificationResult, setVerificationResult] = useState<any>(null);
   const [showResult, setShowResult] = useState(false);
-  const [torchOn, setTorchOn] = useState(false);
-  const [torchSupported, setTorchSupported] = useState(false);
-  const [isScanning, setIsScanning] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  // Refs
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const detectorRef = useRef<any>(null);
-  const scanLoopRef = useRef<number | null>(null);
   const userProfileRef = useRef<any>(null);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     userProfileRef.current = userProfile;
   }, [userProfile]);
 
-  // ─── Start Camera ──────────────────────────────────────────────────────
-  const startCamera = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "environment",
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-      });
-
-      streamRef.current = stream;
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-        console.log("✅ Camera started successfully");
-      }
-
-      // Check for torch support
-      try {
-        const track = stream.getVideoTracks()[0];
-        const capabilities = track.getCapabilities() as any;
-        setTorchSupported(!!capabilities?.torch);
-      } catch {
-        setTorchSupported(false);
-      }
-
-      return stream;
-    } catch (error: any) {
-      console.error("Camera error:", error);
-      if (
-        error.name === "NotAllowedError" ||
-        error.name === "PermissionDeniedError"
-      ) {
-        setCameraError(
-          "Camera permission was denied. Allow camera access and try again.",
-        );
-        setStep("permission-denied");
-      } else {
-        setCameraError("Failed to access camera: " + error.message);
-        setStep("permission-denied");
-      }
-      throw error;
-    }
-  }, []);
-
-  // ─── Stop Camera ──────────────────────────────────────────────────────
-  const stopCamera = useCallback(() => {
-    // Cancel scan loop
-    if (scanLoopRef.current) {
-      cancelAnimationFrame(scanLoopRef.current);
-      scanLoopRef.current = null;
-    }
-
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    detectorRef.current = null;
-    console.log("🛑 Camera stopped");
-  }, []);
-
-  // ─── Toggle Torch ──────────────────────────────────────────────────
-  const toggleTorch = useCallback(async () => {
-    try {
-      if (streamRef.current) {
-        const track = streamRef.current.getVideoTracks()[0];
-        await track.applyConstraints({
-          advanced: [{ torch: !torchOn }],
-        } as any);
-        setTorchOn(!torchOn);
-      }
-    } catch {
-      alert("Flashlight isn't supported on this device/browser.");
-    }
-  }, [torchOn]);
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
 
   // ─── Parse SA ID Barcode ──────────────────────────────────────────────
   const parseSAIDBarcode = useCallback((data: string): ParsedID => {
@@ -306,11 +286,11 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         setShowResult(true);
       } else {
         alert("Verification Failed: " + (res.message || "Please try again."));
-        setStep("scanning");
+        setStep("upload");
       }
     } catch (err: any) {
       alert("Error: " + (err?.message || "Something went wrong."));
-      setStep("scanning");
+      setStep("upload");
     }
   }, []);
 
@@ -324,14 +304,13 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         const validateRes = await authService.validateIDNumber(parsed.idNumber);
         if (!validateRes.success) {
           alert("Invalid ID: " + (validateRes.message || "Please try again."));
-          setStep("scanning");
+          setStep("upload");
           setIsProcessing(false);
           return;
         }
 
         const { mismatches } = compareWithProfile(parsed);
 
-        // Build confirmation message
         let confirmMsg = `ID Scanned\n\n`;
         confirmMsg += `ID Number: ${parsed.idNumber}\n`;
         if (parsed.fullNames) confirmMsg += `Name: ${parsed.fullNames}\n`;
@@ -340,194 +319,96 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           confirmMsg += `DOB: ${parsed.date_of_birth}\n`;
         if (parsed.gender) confirmMsg += `Gender: ${parsed.gender}\n`;
         if (mismatches.length) {
-          confirmMsg += `\n⚠️ Mismatches with your profile:\n${mismatches.join(
-            "\n",
-          )}\n`;
+          confirmMsg += `\n⚠️ Mismatches with your profile:\n${mismatches.join("\n")}\n`;
         }
         confirmMsg += `\nProceed with verification?`;
 
         if (window.confirm(confirmMsg)) {
           await submitVerification(parsed.idNumber);
         } else {
-          setStep("scanning");
+          setStep("upload");
         }
         setIsProcessing(false);
       } catch (err: any) {
         alert("Error: " + (err?.message || "Something went wrong."));
-        setStep("scanning");
+        setStep("upload");
         setIsProcessing(false);
       }
     },
     [compareWithProfile, submitVerification],
   );
 
-  // ─── Start Scanning ──────────────────────────────────────────────────
-  const startScanning = useCallback(async () => {
-    try {
-      setIsScanning(true);
-      setStatusMsg("Checking scanner support...");
-
-      // Check if BarcodeDetector is supported
-      if (!("BarcodeDetector" in window)) {
-        alert(
-          "Your browser doesn't support barcode scanning.\n\n" +
-            "Please use Chrome, Edge, or Safari.\n" +
-            "You can also enter your ID manually.",
-        );
-        setStep("manual");
-        setIsScanning(false);
-        return;
-      }
-
-      // Check if PDF417 is supported
-      const formats = await (
-        window as any
-      ).BarcodeDetector.getSupportedFormats();
-      if (!formats.includes("pdf417") && !formats.includes("pdf_417")) {
-        alert(
-          "PDF417 barcode format is not supported in this browser.\n\n" +
-            "Please try using the manual entry option.",
-        );
-        setStep("manual");
-        setIsScanning(false);
-        return;
-      }
-
-      setStatusMsg("Starting camera...");
-
-      // Start camera
-      await startCamera();
-
-      // Create detector
-      detectorRef.current = new (window as any).BarcodeDetector({
-        formats: ["pdf417"],
-      });
-
-      setStatusMsg("Point camera at the barcode on the back of your ID");
-
-      // Start scan loop
-      const scanFrame = async () => {
-        if (!videoRef.current || !detectorRef.current || !isScanning) {
-          return;
-        }
-
-        try {
-          const barcodes = await detectorRef.current.detect(videoRef.current);
-          if (barcodes && barcodes.length > 0) {
-            const rawData = barcodes[0].rawValue;
-            console.log("📸 Barcode detected:", rawData.substring(0, 50));
-
-            if (rawData) {
-              setIsScanning(false);
-              stopCamera();
-
-              const parsed = parseSAIDBarcode(rawData);
-              if (parsed.idNumber && parsed.idNumber.length === 13) {
-                setScanResult(parsed);
-                await runVerification(parsed);
-              } else {
-                const tryManual = window.confirm(
-                  `Could not extract a valid 13-digit ID number.\n\n` +
-                    `Raw data: ${rawData.substring(0, 100)}\n\n` +
-                    `Would you like to enter the ID manually?`,
-                );
-                if (tryManual) {
-                  setStep("manual");
-                } else {
-                  setStep("scanning");
-                  startScanning();
-                }
-              }
-              return;
-            }
-          }
-        } catch (error) {
-          // No barcode found, continue scanning
-        }
-
-        if (isScanning) {
-          scanLoopRef.current = requestAnimationFrame(scanFrame);
-        }
-      };
-
-      scanFrame();
-    } catch (error: any) {
-      console.error("Failed to start scanning:", error);
-      if (error.name === "NotAllowedError") {
-        setCameraError("Camera permission was denied.");
-        setStep("permission-denied");
-      } else {
-        alert(
-          "Failed to start scanning: " + (error.message || "Please try again."),
-        );
-        setStep("manual");
-      }
-      setIsScanning(false);
-    }
-  }, [startCamera, stopCamera, isScanning, parseSAIDBarcode, runVerification]);
-
-  // ─── Stop Scanning ──────────────────────────────────────────────────
-  const stopScanning = useCallback(() => {
-    setIsScanning(false);
-    if (scanLoopRef.current) {
-      cancelAnimationFrame(scanLoopRef.current);
-      scanLoopRef.current = null;
-    }
-    stopCamera();
-  }, [stopCamera]);
-
-  // ─── Photo Upload ────────────────────────────────────────────────────
+  // ─── Photo Upload (camera capture or gallery) ────────────────────────
   const handlePhotoUpload = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
       if (!file) return;
-
       event.target.value = "";
-      stopScanning();
+
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(URL.createObjectURL(file));
+
+      setStep("processing");
       setIsProcessing(true);
       setStatusMsg("Reading barcode from photo…");
 
       try {
-        // Check if BarcodeDetector is supported
         if (!("BarcodeDetector" in window)) {
-          throw new Error("Barcode detection not supported");
+          alert(
+            "Your browser doesn't support barcode scanning.\n\n" +
+              "Please use Chrome, Edge, or Safari, or enter your ID manually.",
+          );
+          setStep("manual");
+          return;
         }
 
-        const bitmap = await createImageBitmap(file);
-        const detector = new (window as any).BarcodeDetector({
-          formats: ["pdf417"],
-        });
-        const barcodes = await detector.detect(bitmap);
+        const formats = await (
+          window as any
+        ).BarcodeDetector.getSupportedFormats();
+        if (!formats.includes("pdf417") && !formats.includes("pdf_417")) {
+          alert(
+            "PDF417 barcode format is not supported in this browser.\n\n" +
+              "Please try using the manual entry option.",
+          );
+          setStep("manual");
+          return;
+        }
 
-        if (barcodes && barcodes.length > 0) {
-          const rawData = barcodes[0].rawValue;
-          const parsed = parseSAIDBarcode(rawData);
+        const rawData = await detectBarcodeFromFile(file, setStatusMsg);
 
-          if (parsed.idNumber && parsed.idNumber.length === 13) {
-            setScanResult(parsed);
-            await runVerification(parsed);
-          } else {
-            alert(
-              "Could not extract a valid 13-digit ID number from that photo.",
-            );
-            setStep("scanning");
-            setIsProcessing(false);
-          }
+        if (!rawData) {
+          const tryManual = window.confirm(
+            "Couldn't find a barcode in that photo.\n\n" +
+              "Make sure the barcode on the back of your ID is visible somewhere in the shot " +
+              "and try a clearer or better-lit photo.\n\n" +
+              "Enter the ID number manually instead?",
+          );
+          setStep(tryManual ? "manual" : "upload");
+          return;
+        }
+
+        const parsed = parseSAIDBarcode(rawData);
+        if (parsed.idNumber && parsed.idNumber.length === 13) {
+          setScanResult(parsed);
+          await runVerification(parsed);
         } else {
-          alert("Could not read a barcode from that photo.");
-          setStep("scanning");
-          setIsProcessing(false);
+          const tryManual = window.confirm(
+            "Could not extract a valid 13-digit ID number from that photo.\n\n" +
+              "Would you like to enter the ID manually?",
+          );
+          setStep(tryManual ? "manual" : "upload");
         }
       } catch (error: any) {
         alert(
           "Could not read barcode from photo: " +
-            (error.message || "Please try again with better lighting."),
+            (error.message || "Please try again with a clearer photo."),
         );
-        setStep("scanning");
+        setStep("upload");
+      } finally {
         setIsProcessing(false);
       }
     },
-    [parseSAIDBarcode, runVerification, stopScanning],
+    [previewUrl, parseSAIDBarcode, runVerification],
   );
 
   // ─── Manual Entry ────────────────────────────────────────────────────
@@ -572,23 +453,14 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         console.error("Failed to load profile:", error);
       }
       if (mounted) {
-        setStep("scanning");
-        setTimeout(() => startScanning(), 500);
+        setStep("upload");
       }
     };
     loadProfile();
     return () => {
       mounted = false;
-      stopScanning();
     };
-  }, [startScanning, stopScanning]);
-
-  // ─── Cleanup ─────────────────────────────────────────────────────────
-  useEffect(() => {
-    return () => {
-      stopScanning();
-    };
-  }, [stopScanning]);
+  }, []);
 
   // ─── Render: Loading ─────────────────────────────────────────────────
   if (step === "loading") {
@@ -603,45 +475,59 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     );
   }
 
-  // ─── Render: Permission Denied ──────────────────────────────────────
-  if (step === "permission-denied") {
+  // ─── Render: Upload ──────────────────────────────────────────────────
+  if (step === "upload") {
     return (
-      <div style={styles.root}>
-        <div style={styles.permissionContainer}>
-          <div style={styles.permissionIcon}>
-            <Camera size={40} color="#fb8500" />
+      <div style={{ ...styles.root, background: "#fff" }}>
+        <div style={styles.header}>
+          <button onClick={onBack} style={styles.headerButtonDark}>
+            <X size={20} color="#1a1a2e" />
+          </button>
+          <h1 style={styles.headerTitleDark}>Verify Your ID</h1>
+          <div style={{ width: 40 }} />
+        </div>
+
+        <div style={styles.uploadContainer}>
+          <div style={styles.uploadIcon}>
+            <ImagePlus size={40} color="#fb8500" />
           </div>
-          <h2 style={styles.permissionTitle}>Camera Access Needed</h2>
-          <p style={styles.permissionMsg}>
-            {cameraError || "Allow camera access to scan your ID barcode."}
+          <h2 style={styles.uploadTitle}>Photo of your ID barcode</h2>
+          <p style={styles.uploadMsg}>
+            Take or choose a clear photo showing the barcode on the back of your
+            SA ID. It doesn't need to be perfectly lined up — any angle or
+            orientation works, as long as the barcode is visible in the shot.
           </p>
+
           <button
             style={styles.primaryButton}
-            onClick={() => {
-              setStep("scanning");
-              startScanning();
-            }}
+            onClick={() => cameraInputRef.current?.click()}
           >
-            Try Again
+            <Camera size={18} style={{ marginRight: 8 }} />
+            Take Photo
           </button>
           <button
             style={styles.secondaryButton}
-            onClick={() => setStep("manual")}
+            onClick={() => galleryInputRef.current?.click()}
           >
-            Enter ID Manually
+            <ImagePlus size={18} style={{ marginRight: 8 }} />
+            Choose from Gallery
           </button>
-          <button
-            style={styles.uploadButton}
-            onClick={() => document.getElementById("fileInput")?.click()}
-          >
-            <ImageIcon size={16} />
-            Upload Photo
+          <button style={styles.textButton} onClick={() => setStep("manual")}>
+            Enter ID Number Manually
           </button>
+
           <input
-            id="fileInput"
+            ref={cameraInputRef}
             type="file"
             accept="image/*"
             capture="environment"
+            style={{ display: "none" }}
+            onChange={handlePhotoUpload}
+          />
+          <input
+            ref={galleryInputRef}
+            type="file"
+            accept="image/*"
             style={{ display: "none" }}
             onChange={handlePhotoUpload}
           />
@@ -655,15 +541,9 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     return (
       <div style={{ ...styles.root, background: "#fff" }}>
         <div style={styles.manualContainer}>
-          <button
-            style={styles.backButton}
-            onClick={() => {
-              setStep("scanning");
-              startScanning();
-            }}
-          >
+          <button style={styles.backButton} onClick={() => setStep("upload")}>
             <X size={20} color="#fb8500" />
-            <span style={styles.backButtonText}>Back to Scanner</span>
+            <span style={styles.backButtonText}>Back to Upload</span>
           </button>
 
           <h2 style={styles.manualTitle}>Enter ID Manually</h2>
@@ -711,7 +591,19 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     return (
       <div style={{ ...styles.root, background: "#000" }}>
         <div style={styles.centerContainer}>
-          <RefreshCw size={40} className="spin" color="#fff" />
+          {previewUrl && (
+            <img
+              src={previewUrl}
+              alt="Uploaded ID"
+              style={styles.previewThumb}
+            />
+          )}
+          <RefreshCw
+            size={40}
+            className="spin"
+            color="#fff"
+            style={{ marginTop: 20 }}
+          />
           <p style={styles.processingText}>{statusMsg}</p>
         </div>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } } .spin { animation: spin .8s linear infinite; }`}</style>
@@ -775,91 +667,7 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
     );
   }
 
-  // ─── Render: Scanning ─────────────────────────────────────────────────
-  return (
-    <div style={{ ...styles.root, background: "#000", position: "relative" }}>
-      {/* Header */}
-      <div style={styles.header}>
-        <button onClick={onBack} style={styles.headerButton}>
-          <X size={20} color="#fff" />
-        </button>
-        <h1 style={styles.headerTitle}>Scan ID Barcode</h1>
-        {torchSupported && (
-          <button onClick={toggleTorch} style={styles.headerButton}>
-            {torchOn ? (
-              <ZapOff size={18} color="#fff" />
-            ) : (
-              <Zap size={18} color="#fff" />
-            )}
-          </button>
-        )}
-        {!torchSupported && <div style={{ width: 40 }} />}
-      </div>
-
-      {/* Camera View */}
-      <video
-        ref={videoRef}
-        style={{
-          width: "100%",
-          height: "calc(100vh - 60px)",
-          objectFit: "cover",
-          position: "absolute",
-          top: 60,
-          left: 0,
-        }}
-        playsInline
-        muted
-        autoPlay
-      />
-
-      {/* Scan Overlay */}
-      <div style={styles.overlay}>
-        <div style={styles.scanFrame}>
-          <p style={styles.scanHint}>{statusMsg}</p>
-        </div>
-      </div>
-
-      {/* Processing Overlay */}
-      {isProcessing && (
-        <div style={styles.processingOverlay}>
-          <RefreshCw size={40} className="spin" color="#fff" />
-          <p style={styles.processingOverlayText}>Processing ID…</p>
-        </div>
-      )}
-
-      {/* Action Buttons */}
-      <div style={styles.actionsBar}>
-        <button
-          style={styles.actionButton}
-          onClick={() => {
-            stopScanning();
-            setStep("manual");
-          }}
-        >
-          <ImageIcon size={16} color="#fff" style={{ marginRight: 8 }} />
-          Enter Manually
-        </button>
-        <button
-          style={{ ...styles.actionButton, marginTop: 10 }}
-          onClick={() => document.getElementById("fileInput")?.click()}
-        >
-          <ImageIcon size={16} color="#fff" style={{ marginRight: 8 }} />
-          Upload Photo
-        </button>
-      </div>
-
-      <input
-        id="fileInput"
-        type="file"
-        accept="image/*"
-        capture="environment"
-        style={{ display: "none" }}
-        onChange={handlePhotoUpload}
-      />
-
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } } .spin { animation: spin .8s linear infinite; }`}</style>
-    </div>
-  );
+  return null;
 };
 
 // ─── Styles ──────────────────────────────────────────────────────────────
@@ -893,6 +701,15 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: 16,
     color: "#fff",
     fontSize: 16,
+    textAlign: "center",
+    padding: "0 24px",
+  },
+  previewThumb: {
+    width: 220,
+    height: 140,
+    objectFit: "cover",
+    borderRadius: 12,
+    border: "2px solid rgba(255,255,255,0.2)",
   },
   header: {
     display: "flex",
@@ -900,16 +717,11 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "space-between",
     padding: "14px 16px",
     width: "100%",
-    background: "rgba(0,0,0,0.6)",
-    zIndex: 20,
-    height: 60,
+    maxWidth: 480,
     boxSizing: "border-box",
-    position: "absolute",
-    top: 0,
-    left: 0,
   },
-  headerButton: {
-    background: "rgba(255,255,255,0.15)",
+  headerButtonDark: {
+    background: "#f3f4f6",
     border: "none",
     width: 40,
     height: 40,
@@ -918,155 +730,70 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "center",
     cursor: "pointer",
-    color: "#fff",
   },
-  headerTitle: {
+  headerTitleDark: {
     flex: 1,
     margin: 0,
     fontSize: 18,
     fontWeight: 700,
-    color: "#fff",
+    color: "#1a1a2e",
     textAlign: "center",
   },
-  overlay: {
-    position: "absolute",
-    top: 60,
-    left: 0,
-    width: "100%",
-    height: "calc(100vh - 60px)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    pointerEvents: "none",
-    zIndex: 10,
-  },
-  scanFrame: {
-    width: 280,
-    height: 160,
-    border: "2px solid rgba(251,133,0,0.8)",
-    borderRadius: 12,
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    padding: "0 16px 16px",
-  },
-  scanHint: {
-    color: "#fff",
-    fontSize: 13,
-    textAlign: "center",
-    margin: 0,
-    textShadow: "0 1px 4px rgba(0,0,0,0.8)",
-    background: "rgba(0,0,0,0.4)",
-    borderRadius: 6,
-    padding: "4px 8px",
-  },
-  processingOverlay: {
-    position: "absolute",
-    top: 60,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "rgba(0,0,0,0.7)",
-    display: "flex",
-    flexDirection: "column",
-    justifyContent: "center",
-    alignItems: "center",
-    zIndex: 15,
-  },
-  processingOverlayText: {
-    color: "#fff",
-    marginTop: 16,
-    fontSize: 16,
-  },
-  actionsBar: {
-    position: "absolute",
-    bottom: 30,
-    left: "50%",
-    transform: "translateX(-50%)",
-    display: "flex",
-    flexDirection: "column",
-    gap: 10,
-    alignItems: "center",
-    zIndex: 20,
-  },
-  actionButton: {
-    background: "rgba(0,0,0,0.65)",
-    border: "1px solid rgba(255,255,255,0.3)",
-    color: "#fff",
-    padding: "12px 28px",
-    borderRadius: 30,
-    fontSize: 15,
-    fontWeight: 500,
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  permissionContainer: {
+  uploadContainer: {
     flex: 1,
     display: "flex",
     flexDirection: "column",
     justifyContent: "center",
     alignItems: "center",
     padding: 24,
-    background: "#f9fafb",
     width: "100%",
-    maxWidth: 400,
+    maxWidth: 420,
+    boxSizing: "border-box",
   },
-  permissionIcon: {
-    width: 72,
-    height: 72,
+  uploadIcon: {
+    width: 80,
+    height: 80,
     borderRadius: "50%",
     background: "#fff3e0",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 16,
+    marginBottom: 20,
   },
-  permissionTitle: {
+  uploadTitle: {
     fontSize: 20,
     fontWeight: 700,
     color: "#1a1a2e",
     marginBottom: 8,
     marginTop: 0,
+    textAlign: "center",
   },
-  permissionMsg: {
+  uploadMsg: {
     color: "#6b7280",
     fontSize: 14,
     lineHeight: 1.6,
     textAlign: "center",
-    marginBottom: 24,
+    marginBottom: 28,
   },
   primaryButton: {
     background: "#fb8500",
     color: "#fff",
     border: "none",
-    padding: "12px 24px",
+    padding: "14px 24px",
     borderRadius: 8,
     fontWeight: 600,
     fontSize: 15,
     cursor: "pointer",
     width: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
   },
   secondaryButton: {
     background: "#f3f4f6",
     color: "#1a1a2e",
     border: "none",
-    padding: "12px 24px",
-    borderRadius: 8,
-    fontWeight: 600,
-    fontSize: 15,
-    cursor: "pointer",
-    width: "100%",
-    marginTop: 10,
-  },
-  uploadButton: {
-    background: "#e5e7eb",
-    color: "#1a1a2e",
-    border: "none",
-    padding: "12px 24px",
+    padding: "14px 24px",
     borderRadius: 8,
     fontWeight: 600,
     fontSize: 15,
@@ -1076,7 +803,16 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
+  },
+  textButton: {
+    background: "none",
+    border: "none",
+    color: "#fb8500",
+    fontWeight: 600,
+    fontSize: 14,
+    cursor: "pointer",
+    marginTop: 18,
+    padding: 0,
   },
   manualContainer: {
     padding: 24,
