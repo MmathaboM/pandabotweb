@@ -1,4 +1,12 @@
 // VerifyIDPage.tsx
+//
+// NOTE: requires the `@zxing/library` package:
+//   npm install @zxing/library
+//
+// We use a pure-JS decoder (ZXing) instead of the native BarcodeDetector API
+// because BarcodeDetector isn't implemented in Safari/iOS at all, and its
+// PDF417 support is inconsistent across Android browsers too. ZXing decodes
+// entirely in JS so behaviour is identical on iOS, Android, and desktop.
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   X,
@@ -8,6 +16,12 @@ import {
   Shield,
   ShieldCheck,
 } from "lucide-react";
+import {
+  BrowserMultiFormatReader,
+  BarcodeFormat,
+  DecodeHintType,
+  NotFoundException,
+} from "@zxing/library";
 import { authService } from "../../../services/authService";
 
 interface VerifyIDPageProps {
@@ -65,16 +79,24 @@ function drawRotatedCanvas(
   return canvas;
 }
 
+const zxingHints = new Map();
+zxingHints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.PDF_417]);
+zxingHints.set(DecodeHintType.TRY_HARDER, true);
+
 /**
  * Tries to find a PDF417 barcode anywhere in the given image file,
  * regardless of how it's rotated or positioned in the frame.
  * Returns the raw barcode string, or null if nothing was found.
+ *
+ * Uses ZXing (pure JS) rather than the native BarcodeDetector API, since
+ * BarcodeDetector doesn't exist in Safari/iOS and is unreliable for PDF417
+ * on several Android browsers.
  */
 async function detectBarcodeFromFile(
   file: File,
   onProgress?: (message: string) => void,
 ): Promise<string | null> {
-  const detector = new (window as any).BarcodeDetector({ formats: ["pdf417"] });
+  const reader = new BrowserMultiFormatReader(zxingHints as any);
   const bitmap = await createImageBitmap(file);
 
   try {
@@ -82,20 +104,24 @@ async function detectBarcodeFromFile(
       for (const degrees of ROTATIONS) {
         onProgress?.(`Scanning photo… (${degrees}°)`);
         const canvas = drawRotatedCanvas(bitmap, degrees, maxDim);
+        const dataUrl = canvas.toDataURL("image/png");
         try {
-          const results = await detector.detect(canvas);
-          if (results && results.length > 0 && results[0].rawValue) {
-            return results[0].rawValue as string;
+          const result = await reader.decodeFromImageUrl(dataUrl);
+          const text = result?.getText();
+          if (text) return text;
+        } catch (err) {
+          // NotFoundException just means no barcode at this rotation/scale —
+          // keep trying the others. Any other error is logged but non-fatal.
+          if (!(err instanceof NotFoundException)) {
+            console.warn("ZXing decode attempt failed:", err);
           }
-        } catch {
-          // This attempt failed to decode — move on to the next
-          // rotation/scale combination rather than giving up.
         }
       }
     }
     return null;
   } finally {
     bitmap.close?.();
+    reader.reset();
   }
 }
 
@@ -353,27 +379,8 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
       setStatusMsg("Reading barcode from photo…");
 
       try {
-        if (!("BarcodeDetector" in window)) {
-          alert(
-            "Your browser doesn't support barcode scanning.\n\n" +
-              "Please use Chrome, Edge, or Safari, or enter your ID manually.",
-          );
-          setStep("manual");
-          return;
-        }
-
-        const formats = await (
-          window as any
-        ).BarcodeDetector.getSupportedFormats();
-        if (!formats.includes("pdf417") && !formats.includes("pdf_417")) {
-          alert(
-            "PDF417 barcode format is not supported in this browser.\n\n" +
-              "Please try using the manual entry option.",
-          );
-          setStep("manual");
-          return;
-        }
-
+        // No BarcodeDetector feature-check here on purpose — ZXing is a pure-JS
+        // decoder, so it runs identically on iOS Safari, Android, and desktop.
         const rawData = await detectBarcodeFromFile(file, setStatusMsg);
 
         if (!rawData) {
