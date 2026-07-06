@@ -497,13 +497,13 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
             orientation works, as long as the barcode is visible in the shot.
           </p>
 
-          <button
+          {/* <button
             style={styles.primaryButton}
             onClick={() => cameraInputRef.current?.click()}
           >
             <Camera size={18} style={{ marginRight: 8 }} />
             Take Photo
-          </button>
+          </button> */}
           <button
             style={styles.secondaryButton}
             onClick={() => galleryInputRef.current?.click()}
@@ -511,9 +511,9 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
             <ImagePlus size={18} style={{ marginRight: 8 }} />
             Choose from Gallery
           </button>
-          <button style={styles.textButton} onClick={() => setStep("manual")}>
+          {/* <button style={styles.textButton} onClick={() => setStep("manual")}>
             Enter ID Number Manually
-          </button>
+          </button> */}
 
           <input
             ref={cameraInputRef}
