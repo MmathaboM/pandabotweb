@@ -43,6 +43,13 @@ type VerifyStep = "loading" | "upload" | "processing" | "result";
 const ROTATIONS = [0, 90, 180, 270] as const;
 const MAX_DIMENSIONS = [1800, 2600, 1100]; // try a normal, a larger, and a smaller render
 
+// A photo taken at a slight angle (crooked, not a full 90° turn) often just
+// needs a small in-plane tilt correction. This is separate from the fixed
+// 90° rotations above and only kicks in as a second pass if those fail —
+// it does NOT fix real perspective/keystone distortion (camera held at a
+// steep angle to the card), which needs actual perspective correction.
+const TILT_CORRECTIONS = [-15, -10, -5, 5, 10, 15];
+
 function drawRotatedCanvas(
   bitmap: ImageBitmap,
   degrees: number,
@@ -53,10 +60,15 @@ function drawRotatedCanvas(
   const w = width * scale;
   const h = height * scale;
 
+  // For small tilt corrections we pad the canvas so the rotated image's
+  // corners aren't clipped out of frame.
+  const rad = (degrees * Math.PI) / 180;
+  const boundW = Math.abs(w * Math.cos(rad)) + Math.abs(h * Math.sin(rad));
+  const boundH = Math.abs(w * Math.sin(rad)) + Math.abs(h * Math.cos(rad));
+
   const canvas = document.createElement("canvas");
-  const rotatedDims = degrees === 90 || degrees === 270;
-  canvas.width = rotatedDims ? h : w;
-  canvas.height = rotatedDims ? w : h;
+  canvas.width = Math.ceil(boundW);
+  canvas.height = Math.ceil(boundH);
 
   const ctx = canvas.getContext("2d");
   if (!ctx) return canvas;
@@ -66,7 +78,7 @@ function drawRotatedCanvas(
   (ctx as any).filter = "grayscale(1) contrast(1.35)";
 
   ctx.translate(canvas.width / 2, canvas.height / 2);
-  ctx.rotate((degrees * Math.PI) / 180);
+  ctx.rotate(rad);
   ctx.drawImage(bitmap, -w / 2, -h / 2, w, h);
 
   return canvas;
@@ -92,25 +104,50 @@ async function detectBarcodeFromFile(
   const reader = new BrowserMultiFormatReader(zxingHints as any);
   const bitmap = await createImageBitmap(file);
 
+  const tryDecode = async (
+    canvas: HTMLCanvasElement,
+  ): Promise<string | null> => {
+    const dataUrl = canvas.toDataURL("image/png");
+    try {
+      const result = await reader.decodeFromImageUrl(dataUrl);
+      return result?.getText() ?? null;
+    } catch (err) {
+      // NotFoundException just means no barcode at this rotation/scale —
+      // keep trying the others. Any other error is logged but non-fatal.
+      if (!(err instanceof NotFoundException)) {
+        console.warn("ZXing decode attempt failed:", err);
+      }
+      return null;
+    }
+  };
+
   try {
+    // Pass 1: straight orientations (photo sideways/upside-down/right-way-up).
     for (const maxDim of MAX_DIMENSIONS) {
       for (const degrees of ROTATIONS) {
         onProgress?.(`Scanning photo… (${degrees}°)`);
-        const canvas = drawRotatedCanvas(bitmap, degrees, maxDim);
-        const dataUrl = canvas.toDataURL("image/png");
-        try {
-          const result = await reader.decodeFromImageUrl(dataUrl);
-          const text = result?.getText();
-          if (text) return text;
-        } catch (err) {
-          // NotFoundException just means no barcode at this rotation/scale —
-          // keep trying the others. Any other error is logged but non-fatal.
-          if (!(err instanceof NotFoundException)) {
-            console.warn("ZXing decode attempt failed:", err);
-          }
-        }
+        const text = await tryDecode(
+          drawRotatedCanvas(bitmap, degrees, maxDim),
+        );
+        if (text) return text;
       }
     }
+
+    // Pass 2: the photo wasn't decodable straight-on — it may just be held
+    // a bit crooked rather than fully rotated. Try small tilt corrections
+    // around each base orientation. (This won't fix a photo taken from a
+    // steep camera angle relative to the card — that's perspective
+    // distortion, which needs actual perspective correction, not rotation.)
+    onProgress?.("Trying to straighten the photo…");
+    for (const baseDegrees of ROTATIONS) {
+      for (const tilt of TILT_CORRECTIONS) {
+        const text = await tryDecode(
+          drawRotatedCanvas(bitmap, baseDegrees + tilt, MAX_DIMENSIONS[0]),
+        );
+        if (text) return text;
+      }
+    }
+
     return null;
   } finally {
     bitmap.close?.();
@@ -418,8 +455,9 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
         if (!rawData) {
           alert(
             "Couldn't find a barcode in that photo.\n\n" +
-              "Make sure the barcode on the back of your ID is visible somewhere in the shot " +
-              "and try a clearer or better-lit photo.",
+              "This usually happens when the ID was photographed at an angle. " +
+              "Lay it flat and hold the camera directly above it, straight-on " +
+              "rather than tilted, with good lighting and no glare.",
           );
           setStep("upload");
           return;
@@ -507,8 +545,9 @@ export const VerifyIDPage: React.FC<VerifyIDPageProps> = ({ onBack }) => {
           <h2 style={styles.uploadTitle}>Photo of your ID barcode</h2>
           <p style={styles.uploadMsg}>
             Choose a clear photo showing the barcode on the back of your SA ID.
-            It doesn't need to be perfectly lined up — any angle or orientation
-            works, as long as the barcode is visible in the shot.
+            Lay the ID flat and photograph it straight-on, camera parallel to
+            the card. An angled or tilted shot can distort the barcode enough
+            that it won't scan, even if it looks fine to the eye.
           </p>
 
           <button
