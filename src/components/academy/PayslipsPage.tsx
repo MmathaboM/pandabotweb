@@ -346,7 +346,7 @@ const PayslipsPage: React.FC<PayslipsPageProps> = ({
             marginBottom: 16,
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {/* <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <button
               onClick={onBack}
               style={{
@@ -371,7 +371,7 @@ const PayslipsPage: React.FC<PayslipsPageProps> = ({
             >
               My Payslips
             </h2>
-          </div>
+          </div> */}
           <button
             onClick={loadPayslips}
             style={{
@@ -401,7 +401,7 @@ const PayslipsPage: React.FC<PayslipsPageProps> = ({
       )}
 
       {/* SA ID Display */}
-      {saIdNumber && (
+      {/* {saIdNumber && (
         <div
           style={{
             display: "flex",
@@ -423,7 +423,7 @@ const PayslipsPage: React.FC<PayslipsPageProps> = ({
             {payslips.length} payslip{payslips.length !== 1 ? "s" : ""} found
           </span>
         </div>
-      )}
+      )} */}
 
       {/* Search and Filter */}
       <div
@@ -456,7 +456,7 @@ const PayslipsPage: React.FC<PayslipsPageProps> = ({
             }}
           />
         </div>
-        <button
+        {/* <button
           onClick={() => setShowFilters(!showFilters)}
           style={{
             padding: "10px 14px",
@@ -468,11 +468,11 @@ const PayslipsPage: React.FC<PayslipsPageProps> = ({
           }}
         >
           <Filter size={18} />
-        </button>
+        </button> */}
       </div>
 
       {/* Filter Options */}
-      {showFilters && (
+      {/* {showFilters && (
         <div
           style={{
             display: "flex",
@@ -511,7 +511,7 @@ const PayslipsPage: React.FC<PayslipsPageProps> = ({
             ),
           )}
         </div>
-      )}
+      )} */}
 
       {/* Error state */}
       {error && (

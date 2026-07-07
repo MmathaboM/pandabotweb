@@ -769,179 +769,179 @@ const EarningsPage: React.FC<EarningsPageProps> = ({
   const renderDetailedEarnings = () => {
     if (payslips.length === 0) return null;
 
-    return (
-      <div
-        style={{
-          backgroundColor: "#fff",
-          borderRadius: 12,
-          padding: "16px",
-          boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: 12,
-          }}
-        >
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>
-            Payslip Breakdown
-          </div>
-          <span style={{ fontSize: 11, color: "#6B7280" }}>
-            {payslips.length} payslips
-          </span>
-        </div>
+    // return (
+    //   <div
+    //     style={{
+    //       backgroundColor: "#fff",
+    //       borderRadius: 12,
+    //       padding: "16px",
+    //       boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+    //     }}
+    //   >
+    //     <div
+    //       style={{
+    //         display: "flex",
+    //         justifyContent: "space-between",
+    //         alignItems: "center",
+    //         marginBottom: 12,
+    //       }}
+    //     >
+    //       <div style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>
+    //         Payslip Breakdown
+    //       </div>
+    //       <span style={{ fontSize: 11, color: "#6B7280" }}>
+    //         {payslips.length} payslips
+    //       </span>
+    //     </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {payslips.map((payslip) => (
-            <div
-              key={payslip.id}
-              style={{
-                border: "1px solid #F3F4F6",
-                borderRadius: 8,
-                padding: "12px",
-                transition: "all 0.2s",
-                cursor: "pointer",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = "#F9FAFB";
-                e.currentTarget.style.borderColor = "#FB8500";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = "transparent";
-                e.currentTarget.style.borderColor = "#F3F4F6";
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                  gap: 8,
-                }}
-              >
-                <div>
-                  <div
-                    style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}
-                  >
-                    {payslip.payroll_month?.label ||
-                      payslip.title ||
-                      `Payslip #${payslip.id}`}
-                  </div>
-                  <div style={{ fontSize: 11, color: "#6B7280", marginTop: 2 }}>
-                    <Calendar
-                      size={12}
-                      style={{ display: "inline", marginRight: 4 }}
-                    />
-                    {payslip.payroll_month?.label || payslip.period || "N/A"}
-                    {payslip.programme?.name && ` • ${payslip.programme.name}`}
-                  </div>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <div
-                    style={{ fontSize: 16, fontWeight: 700, color: "#FB8500" }}
-                  >
-                    {formatCurrency(payslip.amounts?.net || 0)}
-                  </div>
-                  <div style={{ fontSize: 10, color: "#6B7280" }}>
-                    Gross: {formatCurrency(payslip.amounts?.gross || 0)}
-                  </div>
-                </div>
-              </div>
+    //     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+    //       {payslips.map((payslip) => (
+    //         <div
+    //           key={payslip.id}
+    //           style={{
+    //             border: "1px solid #F3F4F6",
+    //             borderRadius: 8,
+    //             padding: "12px",
+    //             transition: "all 0.2s",
+    //             cursor: "pointer",
+    //           }}
+    //           onMouseEnter={(e) => {
+    //             e.currentTarget.style.backgroundColor = "#F9FAFB";
+    //             e.currentTarget.style.borderColor = "#FB8500";
+    //           }}
+    //           onMouseLeave={(e) => {
+    //             e.currentTarget.style.backgroundColor = "transparent";
+    //             e.currentTarget.style.borderColor = "#F3F4F6";
+    //           }}
+    //         >
+    //           <div
+    //             style={{
+    //               display: "flex",
+    //               justifyContent: "space-between",
+    //               alignItems: "center",
+    //               flexWrap: "wrap",
+    //               gap: 8,
+    //             }}
+    //           >
+    //             <div>
+    //               <div
+    //                 style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}
+    //               >
+    //                 {payslip.payroll_month?.label ||
+    //                   payslip.title ||
+    //                   `Payslip #${payslip.id}`}
+    //               </div>
+    //               <div style={{ fontSize: 11, color: "#6B7280", marginTop: 2 }}>
+    //                 <Calendar
+    //                   size={12}
+    //                   style={{ display: "inline", marginRight: 4 }}
+    //                 />
+    //                 {payslip.payroll_month?.label || payslip.period || "N/A"}
+    //                 {payslip.programme?.name && ` • ${payslip.programme.name}`}
+    //               </div>
+    //             </div>
+    //             <div style={{ textAlign: "right" }}>
+    //               <div
+    //                 style={{ fontSize: 16, fontWeight: 700, color: "#FB8500" }}
+    //               >
+    //                 {formatCurrency(payslip.amounts?.net || 0)}
+    //               </div>
+    //               <div style={{ fontSize: 10, color: "#6B7280" }}>
+    //                 Gross: {formatCurrency(payslip.amounts?.gross || 0)}
+    //               </div>
+    //             </div>
+    //           </div>
 
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(80px, 1fr))",
-                  gap: 8,
-                  marginTop: 8,
-                  paddingTop: 8,
-                  borderTop: "1px solid #F3F4F6",
-                }}
-              >
-                <div>
-                  <div
-                    style={{
-                      fontSize: 9,
-                      color: "#6B7280",
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    PAYE
-                  </div>
-                  <div
-                    style={{ fontSize: 12, fontWeight: 600, color: "#EF4444" }}
-                  >
-                    {formatCurrency(payslip.amounts?.paye || 0)}
-                  </div>
-                </div>
-                <div>
-                  <div
-                    style={{
-                      fontSize: 9,
-                      color: "#6B7280",
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    UIF
-                  </div>
-                  <div
-                    style={{ fontSize: 12, fontWeight: 600, color: "#3B82F6" }}
-                  >
-                    {formatCurrency(payslip.amounts?.uif_employee || 0)}
-                  </div>
-                </div>
-                <div>
-                  <div
-                    style={{
-                      fontSize: 9,
-                      color: "#6B7280",
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    SDL
-                  </div>
-                  <div
-                    style={{ fontSize: 12, fontWeight: 600, color: "#8B5CF6" }}
-                  >
-                    {formatCurrency(payslip.amounts?.sdl || 0)}
-                  </div>
-                </div>
-                <div>
-                  <div
-                    style={{
-                      fontSize: 9,
-                      color: "#6B7280",
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    Status
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 600,
-                      color:
-                        payslip.payroll_month?.status === "approved"
-                          ? "#22C55E"
-                          : "#FB8500",
-                      textTransform: "capitalize",
-                    }}
-                  >
-                    {payslip.payroll_month?.status ||
-                      payslip.payment_status ||
-                      "N/A"}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
+    //           <div
+    //             style={{
+    //               display: "grid",
+    //               gridTemplateColumns: "repeat(auto-fit, minmax(80px, 1fr))",
+    //               gap: 8,
+    //               marginTop: 8,
+    //               paddingTop: 8,
+    //               borderTop: "1px solid #F3F4F6",
+    //             }}
+    //           >
+    //             <div>
+    //               <div
+    //                 style={{
+    //                   fontSize: 9,
+    //                   color: "#6B7280",
+    //                   textTransform: "uppercase",
+    //                 }}
+    //               >
+    //                 PAYE
+    //               </div>
+    //               <div
+    //                 style={{ fontSize: 12, fontWeight: 600, color: "#EF4444" }}
+    //               >
+    //                 {formatCurrency(payslip.amounts?.paye || 0)}
+    //               </div>
+    //             </div>
+    //             <div>
+    //               <div
+    //                 style={{
+    //                   fontSize: 9,
+    //                   color: "#6B7280",
+    //                   textTransform: "uppercase",
+    //                 }}
+    //               >
+    //                 UIF
+    //               </div>
+    //               <div
+    //                 style={{ fontSize: 12, fontWeight: 600, color: "#3B82F6" }}
+    //               >
+    //                 {formatCurrency(payslip.amounts?.uif_employee || 0)}
+    //               </div>
+    //             </div>
+    //             <div>
+    //               <div
+    //                 style={{
+    //                   fontSize: 9,
+    //                   color: "#6B7280",
+    //                   textTransform: "uppercase",
+    //                 }}
+    //               >
+    //                 SDL
+    //               </div>
+    //               <div
+    //                 style={{ fontSize: 12, fontWeight: 600, color: "#8B5CF6" }}
+    //               >
+    //                 {formatCurrency(payslip.amounts?.sdl || 0)}
+    //               </div>
+    //             </div>
+    //             <div>
+    //               <div
+    //                 style={{
+    //                   fontSize: 9,
+    //                   color: "#6B7280",
+    //                   textTransform: "uppercase",
+    //                 }}
+    //               >
+    //                 Status
+    //               </div>
+    //               <div
+    //                 style={{
+    //                   fontSize: 11,
+    //                   fontWeight: 600,
+    //                   color:
+    //                     payslip.payroll_month?.status === "approved"
+    //                       ? "#22C55E"
+    //                       : "#FB8500",
+    //                   textTransform: "capitalize",
+    //                 }}
+    //               >
+    //                 {payslip.payroll_month?.status ||
+    //                   payslip.payment_status ||
+    //                   "N/A"}
+    //               </div>
+    //             </div>
+    //           </div>
+    //         </div>
+    //       ))}
+    //     </div>
+    //   </div>
+    // );
   };
 
   return (
@@ -955,7 +955,7 @@ const EarningsPage: React.FC<EarningsPageProps> = ({
       }}
     >
       {/* Header */}
-      {!standalone && onBack && (
+      {/* {!standalone && onBack && (
         <div
           style={{
             display: "flex",
@@ -1021,7 +1021,7 @@ const EarningsPage: React.FC<EarningsPageProps> = ({
             Refresh
           </button>
         </div>
-      )}
+      )} */}
 
       {/* Error state */}
       {error && (
