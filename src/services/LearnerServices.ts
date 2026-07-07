@@ -1,4 +1,3 @@
-
 import api from "./api";
 
 import type {
@@ -10,12 +9,17 @@ import type {
   EarningsResponse,
   Payment,
   Payslip,
+  PayslipDownloadResponse,
   ProfileCompletion,
   Schedule,
   SubmitAbsenceReasonRequest,
   SubmitAbsenceReasonResponse,
   TodayScheduleAttendance,
+  ApiResponse,
+  PaginatedResponse,
+  HostLocation,
 } from "../types/learner";
+
 export type {
   AttendanceRecord,
   CheckinRequest,
@@ -25,56 +29,27 @@ export type {
   EarningsResponse,
   Payment,
   Payslip,
+  PayslipDownloadResponse,
   ProfileCompletion,
   Schedule,
   SubmitAbsenceReasonRequest,
   SubmitAbsenceReasonResponse,
   TodayScheduleAttendance,
+  ApiResponse,
+  PaginatedResponse,
+  HostLocation,
 };
 
-// ─── Internal-only wrappers ───────────────────────────────────────────────────
+// Hardcoded payroll API token
+const PAYROLL_API_TOKEN =
+  "a84b61b50783e1228c40824558b256b4e4c06e42913d07b281d064e93fa33e7b";
 
-interface ApiResponse<T> {
-  success: boolean;
-  data: T;
-  message?: string;
-}
+// ConnectHR API Base URL
+const CONNECTHR_API_BASE = "https://academy.connecthr.co.za/api/v1";
 
-interface PaginatedResponse<T> {
-  success: boolean;
-  data: T[];
-  meta: {
-    current_page: number;
-    last_page: number;
-    per_page: number;
-    total: number;
-  };
-}
-
-// HostLocation is not in types/learner.ts so it lives here.
-export interface HostLocation {
-  id: string;
-  name: string;
-  latitude: number;
-  longitude: number;
-  radius_meters: number;
-  address?: string;
-  city?: string;
-  schedule_id?: number;
-  training_dates?: string[];
-}
-
-// ─── Service ──────────────────────────────────────────────────────────────────
 
 export const learnerService = {
-  // ===========================================================================
-  // SCHEDULES
-  // ===========================================================================
 
-  /**
-   * Get user's assigned schedules across all enrolled programs.
-   * @param status - 'active' | 'upcoming' | 'past' | 'all'
-   */
   getSchedules: async (
     status: "active" | "upcoming" | "past" | "all" = "active",
   ): Promise<Schedule[]> => {
@@ -84,9 +59,6 @@ export const learnerService = {
     return res.data.schedules;
   },
 
-  /**
-   * Get a single schedule by ID.
-   */
   getSchedule: async (id: number): Promise<Schedule> => {
     const res = await api.get<{ success: boolean; schedules: Schedule[] }>(
       `/v1/my/schedules?status=all`,
@@ -96,13 +68,7 @@ export const learnerService = {
     return found;
   },
 
-  // ===========================================================================
-  // ATTENDANCE / CHECK-IN
-  // ===========================================================================
-
-  /**
-   * Get today's attendance status for all active schedules.
-   */
+  
   getTodayAttendance: async (): Promise<{
     date: string;
     schedules: TodayScheduleAttendance[];
@@ -118,18 +84,11 @@ export const learnerService = {
     };
   },
 
-  /**
-   * Check in to a schedule.
-   * latitude/longitude are optional — omit if not using geofencing on web.
-   */
   checkin: async (data: CheckinRequest): Promise<CheckinResponse> => {
     const res = await api.post<CheckinResponse>("/v1/attendance/checkin", data);
     return res.data;
   },
 
-  /**
-   * Check out from a schedule.
-   */
   checkout: async (data: CheckoutRequest): Promise<CheckoutResponse> => {
     const res = await api.post<CheckoutResponse>(
       "/v1/attendance/checkout",
@@ -138,9 +97,6 @@ export const learnerService = {
     return res.data;
   },
 
-  /**
-   * Submit absence / late-arrival reason.
-   */
   submitAbsenceReason: async (
     data: SubmitAbsenceReasonRequest,
   ): Promise<SubmitAbsenceReasonResponse> => {
@@ -151,9 +107,6 @@ export const learnerService = {
     return res.data;
   },
 
-  /**
-   * Register device token for schedule push notifications.
-   */
   registerForScheduleNotifications: async (data: {
     push_token: string;
     timezone: string;
@@ -165,11 +118,6 @@ export const learnerService = {
     return res.data;
   },
 
-  /**
-   * Get paginated attendance history.
-   * @param scheduleId - Optional: filter by schedule
-   * @param month      - Optional: format YYYY-MM
-   */
   getAttendanceHistory: async (
     scheduleId?: number,
     month?: string,
@@ -189,26 +137,13 @@ export const learnerService = {
     return res.data;
   },
 
-  // ===========================================================================
   // EARNINGS
-  // ===========================================================================
-
-  /**
-   * Get earnings summary, by-schedule breakdown, and bank account details.
-   * Returns EarningsResponse["data"] which contains:
-   *   summary: { total_earned, total_paid, total_pending, total_days_attended }
-   *   by_schedule: EarningsBySchedule[]
-   *   bank_account: BankAccountInfo
-   */
+ 
   getEarnings: async (): Promise<EarningsResponse["data"]> => {
     const res = await api.get<EarningsResponse>("/v1/earnings");
     return res.data.data;
   },
 
-  /**
-   * Get paginated payment history.
-   * @param status - Optional: filter by payment status
-   */
   getPaymentHistory: async (
     status?: "pending" | "approved" | "paid" | "rejected",
     page = 1,
@@ -226,14 +161,8 @@ export const learnerService = {
     return res.data;
   },
 
-  // ===========================================================================
   // PROFILE
-  // ===========================================================================
 
-  /**
-   * Get profile completion status.
-   * Returns: overall_percentage, is_complete, sections, banking, can_receive_payments
-   */
   getProfileCompletion: async (): Promise<ProfileCompletion> => {
     const res = await api.get<ApiResponse<ProfileCompletion>>(
       "/v1/profile/completion",
@@ -244,58 +173,101 @@ export const learnerService = {
     return res.data.data;
   },
 
-  // ===========================================================================
-  // PAYSLIPS
-  // ===========================================================================
-
   /**
-   * Get paginated list of payslip documents.
+   * Get payslips for a learner directly from ConnectHR Academy API
+   * @param saIdNumber -
    */
-  getPayslips: async (
-    page = 1,
-    perPage = 10,
-  ): Promise<PaginatedResponse<Payslip>> => {
-    const res = await api.get<PaginatedResponse<Payslip>>(
-      `/v1/payslips?page=${page}&per_page=${perPage}`,
-    );
-    return res.data;
+  getLearnerPayslips: async (saIdNumber: string): Promise<Payslip[]> => {
+    try {
+      const cleanIdNumber = saIdNumber.replace(/\s/g, "");
+
+      console.log("📄 [ConnectHR] Fetching payslips for SA ID:", cleanIdNumber);
+
+      const url = `${CONNECTHR_API_BASE}/learners/${cleanIdNumber}/payslips`;
+      console.log("[ConnectHR] URL:///////////", url);
+
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${PAYROLL_API_TOKEN}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+      });
+
+      console.log("[ConnectHR] Response status:", response.status);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("[ConnectHR] Error response:////////////", errorText);
+
+        if (response.status === 401) {
+          throw new Error(
+            "Authentication failed. The payroll API token is invalid or expired.",
+          );
+        } else if (response.status === 404) {
+          throw new Error("📭 No payslips found for this SA ID number.");
+        } else {
+          throw new Error(
+            `Failed to fetch payslips: ${response.status} - ${errorText}`,
+          );
+        }
+      }
+
+      const data = await response.json();
+      console.log("[ConnectHR] Response data:", data);
+
+      const payslips = data.data || data || [];
+      return Array.isArray(payslips) ? payslips : [];
+    } catch (error) {
+      console.error("[ConnectHR] Failed to fetch payslips://///////", error);
+      throw error;
+    }
   },
 
-  /**
-   * Get a single payslip by ID.
-   */
-  getPayslip: async (id: number): Promise<Payslip> => {
-    const res = await api.get<ApiResponse<Payslip>>(`/v1/payslips/${id}`);
-    return res.data.data;
+  downloadLearnerPayslip: async (
+    saIdNumber: string,
+    payslipId: number,
+  ): Promise<Blob> => {
+    try {
+      const cleanIdNumber = saIdNumber.replace(/\s/g, "");
+
+      const url = `${CONNECTHR_API_BASE}/learners/${cleanIdNumber}/payslips/${payslipId}/download`;
+      console.log("[ConnectHR] Downloading from:", url);
+
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${PAYROLL_API_TOKEN}`,
+          Accept: "application/pdf",
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("❌ [ConnectHR] Download error:", errorText);
+
+        if (response.status === 401) {
+          throw new Error(
+            "Authentication failed. The payroll API token is invalid or expired.",
+          );
+        } else if (response.status === 404) {
+          throw new Error("Payslip PDF not found.");
+        } else {
+          throw new Error(`Failed to download payslip: ${response.status}`);
+        }
+      }
+
+      return await response.blob();
+    } catch (error) {
+      console.error("[ConnectHR] Failed to download payslip:", error);
+      throw error;
+    }
   },
 
-  /**
-   * Get a signed download URL for a payslip PDF.
-   */
-  getPayslipDownloadUrl: async (
-    id: number,
-  ): Promise<{
-    download_url: string;
-    type: "external" | "local";
-    expires_at?: string;
-  }> => {
-    const res = await api.get<{
-      success: boolean;
-      download_url: string;
-      type: "external" | "local";
-      expires_at?: string;
-    }>(`/v1/payslips/${id}/download`);
-    return res.data;
-  },
-
-  // ===========================================================================
+  
   // HOST LOCATIONS
-  // ===========================================================================
 
-  /**
-   * Get host locations for proximity / geofence tracking.
-   * @param todayOnly - If true, only returns hosts with sessions today
-   */
   getHostLocations: async (todayOnly = true): Promise<HostLocation[]> => {
     const params = todayOnly ? "?today=true" : "";
     const res = await api.get<ApiResponse<HostLocation[]>>(

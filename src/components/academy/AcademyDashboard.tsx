@@ -22,12 +22,21 @@ import SchedulesPage from "./SchedulesPage";
 import StudentCardPage from "./StudentCard";
 import PageHeader from "../../components/PageHeader";
 import LeaveView from "./LeaveView";
+import PayslipsPage from "./PayslipsPage";
+import EarningsPage from "./EarningsPage";
 import { useAuth } from "../../context/AuthContext";
+
 interface AcademyDashboardProps {
   onClose: () => void;
 }
 
-type InternalView = "dashboard" | "schedules" | "studentCard" | "leave";
+type InternalView =
+  | "dashboard"
+  | "schedules"
+  | "studentCard"
+  | "leave"
+  | "payslips"
+  | "earnings";
 
 const AcademyDashboard: React.FC<AcademyDashboardProps> = ({ onClose }) => {
   // ✅ Get user from Auth Context instead of the store
@@ -214,6 +223,7 @@ const AcademyDashboard: React.FC<AcademyDashboardProps> = ({ onClose }) => {
     }
   };
 
+  // ✅ Updated getHeaderProps with payslips case
   const getHeaderProps = () => {
     switch (currentView) {
       case "schedules":
@@ -254,6 +264,19 @@ const AcademyDashboard: React.FC<AcademyDashboardProps> = ({ onClose }) => {
           onBack: () => setCurrentView("dashboard"),
           onRightClick: undefined,
         };
+      case "payslips":
+        return {
+          title: "My Payslips",
+          onBack: () => setCurrentView("dashboard"),
+          onRightClick: undefined,
+        };
+      case "earnings":
+        return {
+          title: "My Earnings",
+          onBack: () => setCurrentView("dashboard"),
+          onRightClick: undefined,
+        };
+
       default:
         return {
           title: "Academy",
@@ -265,6 +288,7 @@ const AcademyDashboard: React.FC<AcademyDashboardProps> = ({ onClose }) => {
     }
   };
 
+  // ✅ Updated renderContent with payslips case
   const renderContent = () => {
     switch (currentView) {
       case "schedules":
@@ -278,6 +302,10 @@ const AcademyDashboard: React.FC<AcademyDashboardProps> = ({ onClose }) => {
         );
       case "leave":
         return <LeaveView />;
+      case "payslips":
+        return <PayslipsPage onBack={() => setCurrentView("dashboard")} />;
+      case "earnings":
+        return <EarningsPage onBack={() => setCurrentView("dashboard")} />;
       default:
         return renderDashboardContent();
     }
@@ -560,8 +588,9 @@ const AcademyDashboard: React.FC<AcademyDashboardProps> = ({ onClose }) => {
                   ? `R${earnings.summary.total_earned.toLocaleString()}`
                   : "View earnings"
               }
-              onClick={() => console.log("Navigate to earnings")}
+              onClick={() => setCurrentView("earnings")}
             />
+            {/* ✅ Updated ActionCard to navigate to payslips */}
             <ActionCard
               icon={FileText}
               iconColor="#FB8500"
@@ -569,7 +598,7 @@ const AcademyDashboard: React.FC<AcademyDashboardProps> = ({ onClose }) => {
               title="My Payslips"
               subtitle="Payment history"
               badge={pendingPaymentsCount}
-              onClick={() => console.log("Navigate to payslips")}
+              onClick={() => setCurrentView("payslips")} // ✅ Navigates to payslips view
             />
             <ActionCard
               icon={IdCard}
