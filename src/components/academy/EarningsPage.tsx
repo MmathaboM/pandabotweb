@@ -6,9 +6,7 @@ import {
   AlertCircle,
   RefreshCw,
   Wallet,
-  DollarSign,
   BarChart3,
-  Download,
   ArrowUp,
   ArrowDown,
   Minus,
@@ -84,37 +82,57 @@ const EarningsPage: React.FC<EarningsPageProps> = ({
   );
   const chartRef = useRef<any>(null);
 
+  // Get the user's SA ID number from auth context - FIXED VERSION
   const getSaIdNumber = useCallback(() => {
     if (!user) return null;
 
-    if (user.personal_info && typeof user.personal_info === "object") {
-      const personalInfo = user.personal_info as any;
+    // Cast to any to safely access properties that TypeScript doesn't know about
+    const userAny = user as any;
+
+    // Try different possible locations for sa_id_number
+    // 1. Direct property
+    if (userAny.sa_id_number) {
+      return String(userAny.sa_id_number);
+    }
+
+    // 2. In personal_info
+    if (userAny.personal_info) {
+      const personalInfo = userAny.personal_info;
       if (personalInfo.sa_id_number) {
         return String(personalInfo.sa_id_number);
       }
-    }
-
-    if (user.demographics && typeof user.demographics === "object") {
-      const demographics = user.demographics as any;
-      if (demographics.sa_id_number) {
-        return String(demographics.sa_id_number);
+      if (personalInfo.id_number) {
+        return String(personalInfo.id_number);
       }
     }
 
-    if ((user as any).sa_id_number) {
-      return String((user as any).sa_id_number);
+    // 3. In demographics
+    if (userAny.demographics) {
+      const demographics = userAny.demographics;
+      if (demographics.sa_id_number) {
+        return String(demographics.sa_id_number);
+      }
+      if (demographics.id_number) {
+        return String(demographics.id_number);
+      }
     }
 
+    // 4. Check for id_number directly on user
+    if (userAny.id_number) {
+      return String(userAny.id_number);
+    }
+
+    console.warn("⚠️ Could not find SA ID number in user object:", user);
     return null;
   }, [user]);
 
   const processEarningsData = useCallback((payslipsData: Payslip[]) => {
-    // Group payslips by month
+    // Group payslips by month using payroll_month
     const monthGroups: { [key: string]: Payslip[] } = {};
 
     payslipsData.forEach((payslip) => {
-      if (payslip.payment_date) {
-        const date = new Date(payslip.payment_date);
+      if (payslip.payroll_month?.month_date) {
+        const date = new Date(payslip.payroll_month.month_date);
         const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
         if (!monthGroups[key]) {
           monthGroups[key] = [];
@@ -133,11 +151,18 @@ const EarningsPage: React.FC<EarningsPageProps> = ({
 
       const totals = payslipsInMonth.reduce(
         (acc, p) => {
-          const gross = p.amounts?.gross || 0;
-          const net = p.amounts?.net || 0;
-          const paye = p.amounts?.paye || 0;
-          const uif = p.amounts?.uif_employee || 0;
-          const sdl = p.amounts?.sdl || 0;
+          const amounts = p.amounts || {
+            gross: 0,
+            net: 0,
+            paye: 0,
+            uif_employee: 0,
+            sdl: 0,
+          };
+          const gross = amounts.gross || 0;
+          const net = amounts.net || 0;
+          const paye = amounts.paye || 0;
+          const uif = amounts.uif_employee || 0;
+          const sdl = amounts.sdl || 0;
 
           return {
             gross: acc.gross + gross,
@@ -367,7 +392,7 @@ const EarningsPage: React.FC<EarningsPageProps> = ({
         labels: {
           font: {
             size: 12,
-            weight: "500",
+            // weight: "500",
           },
           padding: 16,
           usePointStyle: true,
@@ -388,7 +413,7 @@ const EarningsPage: React.FC<EarningsPageProps> = ({
           },
         },
         backgroundColor: "rgba(0,0,0,0.8)",
-        titleFont: { size: 13, weight: "600" },
+        titleFont: { size: 13 },
         bodyFont: { size: 12 },
         padding: 12,
         cornerRadius: 8,
@@ -416,7 +441,7 @@ const EarningsPage: React.FC<EarningsPageProps> = ({
         ticks: {
           font: {
             size: 11,
-            weight: "500",
+            // weight: "500",
           },
         },
       },
@@ -802,8 +827,8 @@ const EarningsPage: React.FC<EarningsPageProps> = ({
                   <div
                     style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}
                   >
-                    {payslip.title ||
-                      payslip.period ||
+                    {payslip.payroll_month?.label ||
+                      payslip.title ||
                       `Payslip #${payslip.id}`}
                   </div>
                   <div style={{ fontSize: 11, color: "#6B7280", marginTop: 2 }}>
@@ -811,7 +836,8 @@ const EarningsPage: React.FC<EarningsPageProps> = ({
                       size={12}
                       style={{ display: "inline", marginRight: 4 }}
                     />
-                    {payslip.period} • {formatDate(payslip.payment_date)}
+                    {payslip.payroll_month?.label || payslip.period || "N/A"}
+                    {payslip.programme?.name && ` • ${payslip.programme.name}`}
                   </div>
                 </div>
                 <div style={{ textAlign: "right" }}>
@@ -899,13 +925,15 @@ const EarningsPage: React.FC<EarningsPageProps> = ({
                       fontSize: 11,
                       fontWeight: 600,
                       color:
-                        payslip.payment_status === "paid"
+                        payslip.payroll_month?.status === "approved"
                           ? "#22C55E"
                           : "#FB8500",
                       textTransform: "capitalize",
                     }}
                   >
-                    {payslip.payment_status || "N/A"}
+                    {payslip.payroll_month?.status ||
+                      payslip.payment_status ||
+                      "N/A"}
                   </div>
                 </div>
               </div>
@@ -914,19 +942,6 @@ const EarningsPage: React.FC<EarningsPageProps> = ({
         </div>
       </div>
     );
-  };
-
-  const formatDate = (dateString: string | null) => {
-    if (!dateString) return "N/A";
-    try {
-      return new Date(dateString).toLocaleDateString("en-ZA", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      });
-    } catch {
-      return dateString;
-    }
   };
 
   return (

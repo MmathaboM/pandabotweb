@@ -7,7 +7,6 @@ import {
   AlertCircle,
   Search,
   Filter,
-  FileDown,
   X,
   User,
   RefreshCw,
@@ -39,30 +38,47 @@ const PayslipsPage: React.FC<PayslipsPageProps> = ({
     [key: number]: number;
   }>({});
 
-  // Get the user's SA ID number from auth context
+  // Get the user's SA ID number from auth context - SAFE VERSION
   const getSaIdNumber = useCallback(() => {
     if (!user) return null;
 
-    // Check nested objects for sa_id_number
-    if (user.personal_info && typeof user.personal_info === "object") {
-      const personalInfo = user.personal_info as any;
+    // Cast to any to safely access properties
+    const userAny = user as any;
+
+    // Try different possible locations for sa_id_number
+    // 1. Direct property
+    if (userAny.sa_id_number) {
+      return String(userAny.sa_id_number);
+    }
+
+    // 2. In personal_info
+    if (userAny.personal_info) {
+      const personalInfo = userAny.personal_info;
       if (personalInfo.sa_id_number) {
         return String(personalInfo.sa_id_number);
       }
-    }
-
-    if (user.demographics && typeof user.demographics === "object") {
-      const demographics = user.demographics as any;
-      if (demographics.sa_id_number) {
-        return String(demographics.sa_id_number);
+      if (personalInfo.id_number) {
+        return String(personalInfo.id_number);
       }
     }
 
-    // Check direct properties
-    if ((user as any).sa_id_number) {
-      return String((user as any).sa_id_number);
+    // 3. In demographics
+    if (userAny.demographics) {
+      const demographics = userAny.demographics;
+      if (demographics.sa_id_number) {
+        return String(demographics.sa_id_number);
+      }
+      if (demographics.id_number) {
+        return String(demographics.id_number);
+      }
     }
 
+    // 4. Check for id_number directly on user
+    if (userAny.id_number) {
+      return String(userAny.id_number);
+    }
+
+    console.warn("⚠️ Could not find SA ID number in user object:", user);
     return null;
   }, [user]);
 
@@ -100,16 +116,13 @@ const PayslipsPage: React.FC<PayslipsPageProps> = ({
   // Method 1: Download using the download_url from the API
   const downloadFromUrl = async (payslip: Payslip) => {
     try {
-      // If the download_url is a full URL, use it directly
       if (payslip.download_url) {
-        // Check if the URL is absolute or relative
         const url = payslip.download_url.startsWith("http")
           ? payslip.download_url
           : `https://academy.connecthr.co.za${payslip.download_url}`;
 
         console.log("📥 Downloading from URL:", url);
 
-        // Fetch the PDF with authentication
         const token =
           "a84b61b50783e1228c40824558b256b4e4c06e42913d07b281d064e93fa33e7b";
         const response = await fetch(url, {
@@ -125,12 +138,10 @@ const PayslipsPage: React.FC<PayslipsPageProps> = ({
 
         const blob = await response.blob();
 
-        // Check if we got a PDF
         if (
           !blob.type.includes("pdf") &&
           blob.type !== "application/octet-stream"
         ) {
-          // Try to parse as JSON error
           const text = await blob.text();
           try {
             const errorData = JSON.parse(text);
@@ -173,7 +184,6 @@ const PayslipsPage: React.FC<PayslipsPageProps> = ({
       let blob: Blob;
       let downloadMethod = "url";
 
-      // Try to download using the URL first
       if (payslip.download_url) {
         try {
           blob = await downloadFromUrl(payslip);
@@ -183,24 +193,20 @@ const PayslipsPage: React.FC<PayslipsPageProps> = ({
             "⚠️ URL download failed, falling back to service method:",
             urlError,
           );
-          // Fallback to service method
           blob = await downloadFromService(payslipId);
           downloadMethod = "Service";
         }
       } else {
-        // No URL available, use service method
         blob = await downloadFromService(payslipId);
         downloadMethod = "Service";
       }
 
       console.log(`✅ Downloaded via ${downloadMethod} method`);
 
-      // Create download link
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
 
-      // Use the file name from the payslip or generate one
       const fileName =
         payslip.file_name ||
         `payslip-${payslip.id}-${payslip.period || "unknown"}.pdf`;
@@ -210,21 +216,18 @@ const PayslipsPage: React.FC<PayslipsPageProps> = ({
       link.click();
       document.body.removeChild(link);
 
-      // Clean up
       setTimeout(() => {
         window.URL.revokeObjectURL(url);
       }, 100);
 
       setDownloadProgress((prev) => ({ ...prev, [payslipId]: 100 }));
 
-      // Close modal if open
       if (selectedPayslip) {
         setTimeout(() => setSelectedPayslip(null), 500);
       }
     } catch (err: any) {
       console.error("❌ Failed to download payslip:", err);
 
-      // Show more specific error message
       let errorMessage =
         err.message || "Failed to download payslip. Please try again.";
 
@@ -344,7 +347,7 @@ const PayslipsPage: React.FC<PayslipsPageProps> = ({
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            {/* <button
+            <button
               onClick={onBack}
               style={{
                 background: "none",
@@ -357,8 +360,8 @@ const PayslipsPage: React.FC<PayslipsPageProps> = ({
               }}
             >
               <ChevronLeft size={24} />
-            </button> */}
-            {/* <h2
+            </button>
+            <h2
               style={{
                 fontSize: 20,
                 fontWeight: 700,
@@ -367,9 +370,9 @@ const PayslipsPage: React.FC<PayslipsPageProps> = ({
               }}
             >
               My Payslips
-            </h2> */}
+            </h2>
           </div>
-          {/* <button
+          <button
             onClick={loadPayslips}
             style={{
               padding: "6px 14px",
@@ -393,12 +396,12 @@ const PayslipsPage: React.FC<PayslipsPageProps> = ({
               }}
             />
             Refresh
-          </button> */}
+          </button>
         </div>
       )}
 
       {/* SA ID Display */}
-      {/* {saIdNumber && (
+      {saIdNumber && (
         <div
           style={{
             display: "flex",
@@ -420,7 +423,7 @@ const PayslipsPage: React.FC<PayslipsPageProps> = ({
             {payslips.length} payslip{payslips.length !== 1 ? "s" : ""} found
           </span>
         </div>
-      )} */}
+      )}
 
       {/* Search and Filter */}
       <div
@@ -972,7 +975,7 @@ const PayslipsPage: React.FC<PayslipsPageProps> = ({
                   marginTop: 4,
                 }}
               >
-                <span
+                {/* <span
                   style={{ fontSize: 16, fontWeight: 600, color: "#111827" }}
                 >
                   Stipend Amount
@@ -981,7 +984,7 @@ const PayslipsPage: React.FC<PayslipsPageProps> = ({
                   style={{ fontSize: 22, fontWeight: 700, color: "#FB8500" }}
                 >
                   {formatCurrency(selectedPayslip.stipend_amount)}
-                </span>
+                </span> */}
               </div>
             </div>
 

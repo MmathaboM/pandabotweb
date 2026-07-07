@@ -251,27 +251,67 @@ export interface Payment {
 
 // ─── PAYSLIP TYPES ────────────────────────────────────────────────────────────
 
+// ─── PAYSLIP TYPES ────────────────────────────────────────────────────────────
+
+export interface PayslipAmounts {
+  gross: number;
+  paye: number;
+  uif_employee: number;
+  uif_employer: number;
+  sdl: number;
+  eti: number;
+  deductions: number;
+  net: number;
+}
+
 export interface Payslip {
   id: number;
-  payslip_type: "staff" | "learner_stipend";
-  title: string;
-  period: string;
-  file_name: string;
-  file_type: string;
-  file_size: number;
-  download_url: string | null;
-  stipend_amount: string | null;
-  payment_status: "pending" | "processing" | "paid" | "failed" | "cancelled";
-  payment_date: string | null;
-  payment_method: string | null;
-  payment_reference: string | null;
-  created_at: string;
+  id_number: string;
+  learner: {
+    id: number;
+    first_names: string;
+    surname: string;
+    full_name: string;
+  };
+  programme: {
+    id: number;
+    name: string;
+  };
+  employer: {
+    id: number;
+    name: string;
+  };
+  payroll_month: {
+    id: number;
+    month_date: string;
+    label: string;
+    status: string;
+  };
+  tax_year: {
+    id: number;
+    year_of_assessment: number;
+    label: string;
+  };
+  amounts: PayslipAmounts;
+  certificate_type: string;
+  download_url: string;
+  // Optional fields for display
+  title?: string;
+  period?: string;
+  file_name?: string;
+  file_type?: string;
+  file_size?: number;
+  stipend_amount?: string;
+  payment_status?: "pending" | "processing" | "paid" | "failed" | "cancelled";
+  payment_date?: string | null;
+  payment_method?: string | null;
+  payment_reference?: string | null;
+  created_at?: string;
   program?: {
     id: number;
     name: string;
     display_name: string;
   };
-  // Computed/display fields
   total?: number;
   status?: string;
   reference?: string;
