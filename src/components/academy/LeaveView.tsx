@@ -859,7 +859,7 @@ const LeaveView: React.FC = () => {
       )}
 
       {/* Tab bar */}
-      <div
+      {/* <div
         style={{
           display: "flex",
           borderBottom: "1px solid var(--border)",
@@ -896,7 +896,7 @@ const LeaveView: React.FC = () => {
                 : "Apply"}
           </button>
         ))}
-      </div>
+      </div> */}
 
       {/* ── Balance tab ── */}
       {view === "balance" && (
@@ -940,7 +940,7 @@ const LeaveView: React.FC = () => {
           )}
 
           {/* Quick apply CTA */}
-          <button
+          {/* <button
             onClick={() => setView("apply")}
             style={{
               marginTop: 20,
@@ -960,7 +960,7 @@ const LeaveView: React.FC = () => {
             }}
           >
             Apply for leave <ChevronRight size={16} />
-          </button>
+          </button> */}
         </div>
       )}
 

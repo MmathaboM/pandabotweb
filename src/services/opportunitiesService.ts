@@ -1,10 +1,7 @@
 // services/opportunitiesService.ts
 import api from "./api";
 import type { Opportunity } from "../types";
-import type {
-  Assessment,
-  AssessmentResult,
-} from "../types/assessment";
+import type { Assessment, AssessmentResult } from "../types/assessment";
 
 export interface OpportunityFilters {
   q?: string;
@@ -277,17 +274,20 @@ export const opportunitiesService = {
     return data.data || [];
   },
 
- async getAssessmentDetails(assessmentId: number, opportunityId: number): Promise<Assessment> {
-  const { data } = await api.get(`/v1/assessments/${assessmentId}`, {
-    params: { opportunity_id: opportunityId },
-  });
-  return data.data;
-},
+  async getAssessmentDetails(
+    assessmentId: number,
+    opportunityId: number,
+  ): Promise<Assessment> {
+    const { data } = await api.get(`/v1/assessments/${assessmentId}`, {
+      params: { opportunity_id: opportunityId },
+    });
+    return data.data;
+  },
 
   async submitAssessment(
     assessmentId: number,
     opportunityId: number,
-    answers: Record<number, number>, 
+    answers: Record<number, number>,
   ): Promise<{ message: string; result: AssessmentResult }> {
     const { data } = await api.post(`/v1/assessments/${assessmentId}/submit`, {
       opportunity_id: opportunityId,
@@ -304,5 +304,15 @@ export const opportunitiesService = {
       params: { opportunity_id: opportunityId },
     });
     return data.data;
+  },
+  async getInductionByApplication(applicationId: number): Promise<any> {
+    try {
+      const { data } = await api.get(
+        `/v1/opportunities/my-applications/${applicationId}/induction`,
+      );
+      return data.data || null;
+    } catch {
+      return null;
+    }
   },
 };

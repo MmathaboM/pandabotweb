@@ -1,4 +1,3 @@
-// src/components/profile/ApplicationDetailPage.tsx
 import React, { useEffect, useState } from "react";
 import {
   ArrowLeft,
@@ -9,14 +8,35 @@ import {
   MapPin,
   MessageSquare,
   XCircle,
+  UserCheck,
+  Mail,
+  Phone,
+  FileText,
+  Download,
 } from "lucide-react";
 import { opportunitiesService } from "../../services/opportunitiesService";
-import type { ApplicationDetail, InterviewDetails } from "../../services/opportunitiesService";
+import type {
+  ApplicationDetail,
+  InterviewDetails,
+} from "../../services/opportunitiesService";
 
 interface ApplicationDetailPageProps {
   applicationId: number;
   onBack: () => void;
   onNavigate?: (path: string) => void;
+}
+
+// --- Induction Type based on your database ---
+interface Induction {
+  id: number;
+  opportunity_id: number;
+  opportunity_title: string;
+  status: "pending" | "in_progress" | "completed" | "not_started";
+  sent_at: string | null;
+  date: string | null;
+  location: string | null;
+  details: string | null;
+  completed_at: string | null;
 }
 
 function formatDate(date: string | null) {
@@ -27,6 +47,15 @@ function formatDate(date: string | null) {
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+  });
+}
+
+function formatDateShort(date: string | null) {
+  if (!date) return "Not scheduled";
+  return new Date(date).toLocaleDateString("en-ZA", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
   });
 }
 
@@ -52,6 +81,24 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function InductionStatusBadge({ status }: { status: string }) {
+  const config = {
+    not_started: { label: "Not Started", color: "#9ca3af" },
+    pending: { label: "Pending", color: "#f59e0b" },
+    in_progress: { label: "In Progress", color: "#3b82f6" },
+    completed: { label: "Completed", color: "#10b981" },
+  }[status] || { label: status, color: "#6b7280" };
+
+  return (
+    <span
+      className="app-status-badge"
+      style={{ backgroundColor: config.color + "20", color: config.color }}
+    >
+      {config.label}
+    </span>
+  );
+}
+
 export default function ApplicationDetailPage({
   applicationId,
   onBack,
@@ -60,6 +107,7 @@ export default function ApplicationDetailPage({
     null,
   );
   const [interview, setInterview] = useState<InterviewDetails | null>(null);
+  const [induction, setInduction] = useState<Induction | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isConfirming, setIsConfirming] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
@@ -75,17 +123,24 @@ export default function ApplicationDetailPage({
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const [appData, interviewData] = await Promise.all([
+      const [appData, interviewData, inductionData] = await Promise.all([
         opportunitiesService.getApplicationDetails(applicationId),
         opportunitiesService
           .getInterviewDetails(applicationId)
           .catch(() => null),
+        opportunitiesService
+          .getInductionByApplication(applicationId)
+          .catch(() => null),
       ]);
+
+      console.log("Induction Data:", inductionData);
+      console.log("Application Status:", appData?.status);
+
       setApplication(appData);
       setInterview(interviewData);
+      setInduction(inductionData);
     } catch (error) {
       console.error("Failed to load application details:", error);
-      alert("Failed to load application details");
     } finally {
       setIsLoading(false);
     }
@@ -140,9 +195,12 @@ export default function ApplicationDetailPage({
 
   const hasInterview = interview && interview.interview_location;
   const isUpcoming = interview?.is_upcoming === true;
+  const CONFIRMABLE_STATUSES = ["pending", "reviewing", "shortlisted"];
   const canConfirm =
-    isUpcoming &&
-    (application.status === "reviewing" || application.status === "pending");
+    isUpcoming && CONFIRMABLE_STATUSES.includes(application.status);
+
+  // ✅ FIXED: Show induction if data exists AND has any content
+  const hasInduction = induction !== null && induction.opportunity_title;
 
   return (
     <>
@@ -249,6 +307,139 @@ export default function ApplicationDetailPage({
             </div>
           )}
 
+          {/* ─── INDUCTION SECTION ─── */}
+          {hasInduction && (
+            <div className="app-section">
+              <h3 className="app-section__title">
+                <UserCheck
+                  size={18}
+                  style={{ display: "inline", marginRight: 8 }}
+                />
+                Induction Program
+              </h3>
+              <div className="app-card">
+                {/* Induction Header */}
+                <div className="ind-header-row">
+                  <div>
+                    <div className="ind-opportunity-name">
+                      {induction.opportunity_title}
+                    </div>
+                    <InductionStatusBadge status={induction.status} />
+                  </div>
+                </div>
+
+                <div className="app-divider" />
+
+                {/* Induction Details */}
+                <div className="ind-details-grid">
+                  {induction.date && (
+                    <div className="ind-detail-item">
+                      <Calendar size={16} className="ind-detail-icon" />
+                      <div>
+                        <div className="ind-detail-label">Induction Date</div>
+                        <div className="ind-detail-value">
+                          {formatDateShort(induction.date)}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {induction.location && (
+                    <div className="ind-detail-item">
+                      <MapPin size={16} className="ind-detail-icon" />
+                      <div>
+                        <div className="ind-detail-label">Location</div>
+                        <div className="ind-detail-value">
+                          {induction.location}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {induction.sent_at && (
+                    <div className="ind-detail-item">
+                      <Mail size={16} className="ind-detail-icon" />
+                      <div>
+                        <div className="ind-detail-label">Invitation Sent</div>
+                        <div className="ind-detail-value">
+                          {formatDateShort(induction.sent_at)}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {induction.completed_at && (
+                    <div className="ind-detail-item">
+                      <CheckCircle
+                        size={16}
+                        className="ind-detail-icon"
+                        style={{ color: "#10b981" }}
+                      />
+                      <div>
+                        <div className="ind-detail-label">Completed</div>
+                        <div className="ind-detail-value">
+                          {formatDateShort(induction.completed_at)}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Induction Details Text */}
+                {induction.details && (
+                  <>
+                    <div className="app-divider" />
+                    <div className="ind-details-text">
+                      <div className="ind-details-label">
+                        Additional Details
+                      </div>
+                      <p className="ind-details-value-text">
+                        {induction.details}
+                      </p>
+                    </div>
+                  </>
+                )}
+
+                {/* Status Message */}
+                {induction.status === "pending" && (
+                  <div
+                    className="app-message app-message--info"
+                    style={{ marginTop: 16 }}
+                  >
+                    <Clock size={20} />
+                    <p>
+                      Your induction invitation has been sent. Please check your
+                      email for more details.
+                    </p>
+                  </div>
+                )}
+
+                {induction.status === "in_progress" && (
+                  <div
+                    className="app-message app-message--info"
+                    style={{ marginTop: 16 }}
+                  >
+                    <UserCheck size={20} />
+                    <p>
+                      Your induction is currently in progress. Complete all
+                      required steps to finish.
+                    </p>
+                  </div>
+                )}
+
+                {induction.status === "completed" && (
+                  <div
+                    className="app-message app-message--success"
+                    style={{ marginTop: 16 }}
+                  >
+                    <CheckCircle size={20} />
+                    <p>
+                      🎉 Congratulations! You have successfully completed your
+                      induction.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Recruiter Notes */}
           {application.latest_notes && application.latest_notes.length > 0 && (
             <div className="app-section">
@@ -302,6 +493,32 @@ export default function ApplicationDetailPage({
                     </div>
                     <div className="app-timeline-date">
                       {formatDate(application.interview_scheduled_at)}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {induction?.sent_at && (
+                <div className="app-timeline-item">
+                  <div className="app-timeline-dot app-timeline-dot--success" />
+                  <div>
+                    <div className="app-timeline-title">
+                      Induction Invitation Sent
+                    </div>
+                    <div className="app-timeline-date">
+                      {formatDate(induction.sent_at)}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {induction?.completed_at && (
+                <div className="app-timeline-item">
+                  <div className="app-timeline-dot app-timeline-dot--success" />
+                  <div>
+                    <div className="app-timeline-title">
+                      Induction Completed
+                    </div>
+                    <div className="app-timeline-date">
+                      {formatDate(induction.completed_at)}
                     </div>
                   </div>
                 </div>
@@ -384,7 +601,7 @@ const CSS = `
   .app-opportunity__title { font-size: 18px; font-weight: 700; margin: 0 0 8px; color: var(--text-primary); }
   .app-status-badge { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; text-transform: capitalize; }
   .app-section { margin-bottom: 24px; }
-  .app-section__title { font-size: 16px; font-weight: 700; color: var(--text-primary); margin: 0 0 12px 4px; }
+  .app-section__title { font-size: 16px; font-weight: 700; color: var(--text-primary); margin: 0 0 12px 4px; display: flex; align-items: center; gap: 8px; }
   .app-info-row { display: flex; gap: 12px; }
   .app-info-icon { color: var(--primary); flex-shrink: 0; }
   .app-info-label { font-size: 12px; color: var(--text-muted); margin-bottom: 2px; }
@@ -403,7 +620,8 @@ const CSS = `
   .app-note-header { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 11px; margin-bottom: 8px; }
   .app-note-text { font-size: 14px; color: var(--text-primary); }
   .app-timeline-item { display: flex; gap: 12px; margin-bottom: 16px; }
-  .app-timeline-dot { width: 8px; height: 8px; background: var(--primary); border-radius: 50%; margin-top: 4px; }
+  .app-timeline-dot { width: 8px; height: 8px; background: var(--primary); border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
+  .app-timeline-dot--success { background: var(--success); }
   .app-timeline-title { font-weight: 500; font-size: 14px; color: var(--text-primary); }
   .app-timeline-date { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
   .app-spinner-small { width: 18px; height: 18px; border: 2px solid white; border-top-color: transparent; border-radius: 50%; animation: spin 0.7s linear infinite; }
@@ -417,4 +635,23 @@ const CSS = `
   .app-modal-title { font-size: 20px; font-weight: 700; margin: 8px 0 4px; }
   .app-modal-message { font-size: 14px; color: var(--text-muted); margin: 8px 0 16px; }
   .app-modal-btn { background: var(--primary); color: white; border: none; padding: 10px 20px; border-radius: 12px; font-weight: 600; cursor: pointer; }
+
+  /* ─── INDUCTION STYLES ─── */
+  .ind-header-row { display: flex; justify-content: space-between; align-items: center; }
+  .ind-opportunity-name { font-weight: 600; font-size: 15px; color: var(--text-primary); margin-bottom: 6px; }
+
+  .ind-details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .ind-detail-item { display: flex; gap: 10px; align-items: flex-start; }
+  .ind-detail-icon { color: var(--primary); flex-shrink: 0; margin-top: 2px; }
+  .ind-detail-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .ind-detail-value { font-size: 13px; font-weight: 500; color: var(--text-primary); word-break: break-word; }
+
+  .ind-details-text { margin-top: 4px; }
+  .ind-details-label { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 4px; }
+  .ind-details-value-text { font-size: 14px; color: var(--text-primary); line-height: 1.6; margin: 0; }
+
+  @media (max-width: 480px) {
+    .ind-details-grid { grid-template-columns: 1fr; }
+    .ind-header-row { flex-direction: column; align-items: flex-start; gap: 12px; }
+  }
 `;
