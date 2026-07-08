@@ -14,17 +14,19 @@ import type {
   AssessmentResult,
 } from "../../types/assessment";
 
-// Local type matching the actual API response for questions
+interface ApiOption {
+  id: number;
+  option_text: string;
+  assessment_question_id?: number;
+}
+
 interface ApiQuestion {
   id: number;
-  question_text: string;
-  type: "multiple_choice" | "text" | "single_choice";
-  options?: Array<{
-    id: number;
-    option_text: string;
-    assessment_question_id?: number;
-  }>;
+  question: string; // API returns "question" not "question_text"
+  type?: "multiple_choice" | "text" | "single_choice";
+  options?: ApiOption[];
   points: number;
+  order?: number;
 }
 
 interface AssessmentViewProps {
@@ -37,7 +39,6 @@ interface AssessmentViewProps {
 type ViewState = "loading" | "taking" | "submitting" | "result";
 
 const DEFAULT_PASS_SCORE = 70;
-const DEFAULT_TIME_LIMIT_MINUTES = 30; // fallback if API doesn't provide time
 
 export default function AssessmentView({
   assessmentId,
@@ -47,6 +48,7 @@ export default function AssessmentView({
 }: AssessmentViewProps) {
   const [viewState, setViewState] = useState<ViewState>("loading");
   const [assessment, setAssessment] = useState<Assessment | null>(null);
+  const [questions, setQuestions] = useState<ApiQuestion[]>([]);
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [result, setResult] = useState<AssessmentResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -60,36 +62,52 @@ export default function AssessmentView({
           assessmentId,
           opportunityId,
         );
-        const typedData = data as Assessment & { questions?: ApiQuestion[] };
-        setAssessment(typedData);
 
-        if (typedData.status === "completed" && typedData.score !== undefined) {
+        console.log("Assessment data:", data);
+
+        // Cast to any to access the nested data
+        const typedData = data as any;
+
+        // The API returns { data: { ... } } structure
+        const assessmentData = typedData.data || typedData;
+
+        setAssessment(assessmentData);
+
+        // Extract questions from the response
+        const questionList = assessmentData.questions || [];
+        setQuestions(questionList);
+
+        if (
+          assessmentData.status === "completed" &&
+          assessmentData.score !== undefined
+        ) {
           const resultData: AssessmentResult = {
-            assessment_id: typedData.id,
-            title: typedData.title,
-            score: typedData.score,
-            max_score: typedData.max_score || typedData.score,
-            percentage: typedData.max_score
-              ? Math.round((typedData.score / typedData.max_score) * 100)
+            assessment_id: assessmentData.id,
+            title: assessmentData.title,
+            score: assessmentData.score,
+            max_score: assessmentData.max_score || assessmentData.score,
+            percentage: assessmentData.max_score
+              ? Math.round(
+                  (assessmentData.score / assessmentData.max_score) * 100,
+                )
               : 0,
-            passed: typedData.passed || false,
-            completed_at: typedData.completed_at || new Date().toISOString(),
+            passed: assessmentData.passed || false,
+            completed_at:
+              assessmentData.completed_at || new Date().toISOString(),
           };
           setResult(resultData);
           setViewState("result");
         } else {
           setViewState("taking");
           // Try both possible fields and fallback to default
-          let minutes = typedData.duration_minutes;
+          let minutes = assessmentData.duration_minutes;
           if (!minutes) {
-            // @ts-ignore – fallback to time_limit_minutes if it exists (old API)
-            minutes = typedData.time_limit_minutes;
+            minutes = assessmentData.time_limit_minutes;
           }
           if (minutes) {
             setTimeLeft(minutes * 60);
           } else {
-            // If no time limit provided, set a default
-            setTimeLeft(DEFAULT_TIME_LIMIT_MINUTES * 60);
+            setTimeLeft(30 * 60); // Default 30 minutes
           }
         }
       } catch (err) {
@@ -114,7 +132,7 @@ export default function AssessmentView({
       });
     }, 1000);
     return () => clearInterval(timerRef.current!);
-  }, [viewState]); // only depend on viewState, not timeLeft
+  }, [viewState]);
 
   const handleAutoSubmit = () => {
     if (viewState === "taking" && assessment) {
@@ -133,12 +151,10 @@ export default function AssessmentView({
   };
 
   const handleSubmit = async () => {
-    if (!assessment?.questions) return;
+    if (!questions.length) return;
     setViewState("submitting");
     try {
-      const allAnswered = assessment.questions.every(
-        (q) => answers[q.id] !== undefined,
-      );
+      const allAnswered = questions.every((q) => answers[q.id] !== undefined);
       if (!allAnswered) {
         setError("Please answer all questions before submitting.");
         setViewState("taking");
@@ -160,10 +176,10 @@ export default function AssessmentView({
     }
   };
 
-  const answeredCount = assessment?.questions
-    ? assessment.questions.filter((q) => answers[q.id] !== undefined).length
-    : 0;
-  const totalQuestions = assessment?.questions?.length ?? 0;
+  const answeredCount = questions.filter(
+    (q) => answers[q.id] !== undefined,
+  ).length;
+  const totalQuestions = questions.length;
   const progressPct =
     totalQuestions > 0 ? (answeredCount / totalQuestions) * 100 : 0;
 
@@ -180,7 +196,7 @@ export default function AssessmentView({
             {question.points} {question.points === 1 ? "pt" : "pts"}
           </span>
         </div>
-        <div className="av-question-text">{question.question_text}</div>
+        <div className="av-question-text">{question.question}</div>
         <div className="av-options">
           {question.options?.map((option) => (
             <label
@@ -252,7 +268,7 @@ export default function AssessmentView({
               className={`av-score-bar-fill ${
                 isPassed ? "av-bar-pass" : "av-bar-fail"
               }`}
-              style={{ width: `${percentage}%` }}
+              style={{ width: `${Math.min(percentage, 100)}%` }}
             />
           </div>
           <p className="av-score-hint">Pass threshold: {DEFAULT_PASS_SCORE}%</p>
@@ -319,7 +335,6 @@ export default function AssessmentView({
 
   if ((viewState === "taking" || viewState === "submitting") && assessment) {
     const isSubmitting = viewState === "submitting";
-    const questions = assessment.questions as ApiQuestion[] | undefined;
 
     return (
       <>
@@ -332,7 +347,9 @@ export default function AssessmentView({
             </button>
             <span className="av-header-title">{assessment.title}</span>
             {timeLeft !== null && (
-              <div className="av-header-timer">
+              <div
+                className={`av-header-timer ${timeLeft < 60 ? "urgent" : ""}`}
+              >
                 <Clock size={15} color="#fff" />
                 <span>{formatTime(timeLeft)}</span>
               </div>
@@ -343,13 +360,13 @@ export default function AssessmentView({
           <div className="av-scrollable-content">
             <div className="av-content-inner">
               <div className="av-meta-bar">
-                <span>{assessment.description}</span>
+                <span>
+                  {assessment.description || "Complete all questions"}
+                </span>
                 <span className="av-meta-pills">
-                  <span className="av-pill">{assessment.title}</span>
                   <span className="av-pill">Pass: {DEFAULT_PASS_SCORE}%</span>
                   <span className="av-pill">
-                    {questions?.length ?? 0}{" "}
-                    {(questions?.length ?? 0) === 1 ? "Q" : "Qs"}
+                    {totalQuestions} {totalQuestions === 1 ? "Q" : "Qs"}
                   </span>
                 </span>
               </div>
@@ -367,7 +384,7 @@ export default function AssessmentView({
               </div>
 
               <div className="av-questions">
-                {questions?.map((q, idx) => renderQuestion(q, idx))}
+                {questions.map((q, idx) => renderQuestion(q, idx))}
               </div>
 
               <div className="av-actions">
@@ -410,19 +427,19 @@ export const assessmentViewCSS = `
   }
 
   /* ── Header (sticky, dark) ── */
-.av-header {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  background: linear-gradient(135deg, #fb8500 0%, #e67600 100%);
-  padding: 16px 20px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-shrink: 0;
-  min-height: 64px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-}
+  .av-header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: linear-gradient(135deg, #fb8500 0%, #e67600 100%);
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+    min-height: 64px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  }
 
   .av-back-btn {
     width: 40px;
@@ -815,6 +832,24 @@ export const assessmentViewCSS = `
     margin: 0;
     font-size: 12px;
     color: #a0aec0;
+  }
+
+  .av-ghost-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: transparent;
+    border: none;
+    color: #4a5568;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 8px 12px;
+    border-radius: 8px;
+    transition: background 0.15s;
+  }
+  .av-ghost-btn:hover {
+    background: #f1f3f5;
   }
 
   /* ── Full-screen states (loading / error) ── */

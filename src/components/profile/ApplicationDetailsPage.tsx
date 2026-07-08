@@ -19,6 +19,7 @@ import type {
   ApplicationDetail,
   InterviewDetails,
 } from "../../services/opportunitiesService";
+import PageHeader from "../PageHeader";
 
 interface ApplicationDetailPageProps {
   applicationId: number;
@@ -206,14 +207,7 @@ export default function ApplicationDetailPage({
     <>
       <style>{CSS}</style>
       <div className="app-root">
-        <div className="app-header">
-          <button className="app-back-btn" onClick={onBack}>
-            <ArrowLeft size={20} />
-            <span>Back</span>
-          </button>
-          <h2 className="app-header__title">Application Details</h2>
-        </div>
-
+        <PageHeader title="Application Details" onBack={onBack} />
         <div className="app-body">
           {/* Opportunity Card */}
           <div className="app-card app-card--opportunity">
