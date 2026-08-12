@@ -1,4 +1,3 @@
-// src/pages/MyOpportunitiesPage.tsx
 import React, { useState, useEffect, useCallback } from "react";
 import {
   Briefcase,
@@ -17,6 +16,7 @@ import { Assessment as AssessmentType } from "../../types/assessment";
 import ApplicationDetailPage from "./ApplicationDetailsPage";
 import AssessmentView from "./AssessmentView";
 import PageHeader from "../../components/PageHeader";
+import OpportunitiesTab from "../OpportunitiesTab";
 
 interface MyOpportunitiesPageProps {
   onBack: () => void;
@@ -218,6 +218,7 @@ export default function MyOpportunitiesPage({
   onBack,
   onNavigate,
 }: MyOpportunitiesPageProps) {
+  // ✅ ALL HOOKS MUST BE DECLARED FIRST - BEFORE ANY CONDITIONAL RETURNS
   const [activeTab, setActiveTab] = useState<TabType>("applications");
   const [applications, setApplications] = useState<ApplicationDetail[]>([]);
   const [assessments, setAssessments] = useState<AssessmentType[]>([]);
@@ -229,6 +230,7 @@ export default function MyOpportunitiesPage({
     id: number;
     opportunityId: number;
   } | null>(null);
+  const [showOpportunities, setShowOpportunities] = useState(false);
 
   const loadApplications = useCallback(async () => {
     try {
@@ -272,6 +274,25 @@ export default function MyOpportunitiesPage({
       loadAssessments().finally(() => setIsLoading(false));
     }
   }, [activeTab, loadApplications, loadAssessments]);
+
+  // ✅ NOW we can have conditional returns - after all hooks are declared
+  // Navigate to OpportunitiesTab when showOpportunities is true
+  if (showOpportunities) {
+    return (
+      <OpportunitiesTab
+        fullscreen={true}
+        onBack={() => {
+          setShowOpportunities(false);
+          loadApplications(); // Refresh applications when coming back
+        }}
+        onViewOpportunity={(id) => {
+          if (onNavigate) {
+            onNavigate(`/opportunity/${id}`);
+          }
+        }}
+      />
+    );
+  }
 
   // Show application details page if an application is selected
   if (selectedAppId !== null) {
@@ -341,43 +362,6 @@ export default function MyOpportunitiesPage({
             </button>
           </div>
 
-          {/* {activeTab === "applications" && stats && (
-            <div className="mo-stats-card">
-              <div className="mo-stat-item">
-                <div className="mo-stat-value">{stats.total || 0}</div>
-                <div className="mo-stat-label">Total</div>
-              </div>
-              <div className="mo-stat-divider" />
-              <div className="mo-stat-item">
-                <div className="mo-stat-value" style={{ color: "#f59e0b" }}>
-                  {pendingCount}
-                </div>
-                <div className="mo-stat-label">Pending</div>
-              </div>
-              <div className="mo-stat-divider" />
-              <div className="mo-stat-item">
-                <div className="mo-stat-value" style={{ color: "#3b82f6" }}>
-                  {stats.reviewing || 0}
-                </div>
-                <div className="mo-stat-label">Reviewing</div>
-              </div>
-              <div className="mo-stat-divider" />
-              <div className="mo-stat-item">
-                <div className="mo-stat-value" style={{ color: "#3b82f6" }}>
-                  {stats.shortlisted || 0}
-                </div>
-                <div className="mo-stat-label">Shortlisted</div>
-              </div>
-              <div className="mo-stat-divider" />
-              <div className="mo-stat-item">
-                <div className="mo-stat-value" style={{ color: "#10b981" }}>
-                  {stats.interviewed || 0}
-                </div>
-                <div className="mo-stat-label">Interviewed</div>
-              </div>
-            </div>
-          )} */}
-
           {isLoading ? (
             <div className="mo-loading">Loading...</div>
           ) : activeTab === "applications" ? (
@@ -390,7 +374,7 @@ export default function MyOpportunitiesPage({
                 </div>
                 <button
                   className="mo-browse-btn"
-                  onClick={() => onNavigate?.("/dashboard/opportunities")}
+                  onClick={() => setShowOpportunities(true)}
                 >
                   Browse Opportunities
                 </button>
